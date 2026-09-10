@@ -1,8 +1,9 @@
 use super::super::RenderCommand;
 use super::codec::*;
 use crate::{
-    BindGroupId, BufferId, BufferSlice, DispatchArgs, DrawArgs, DrawIndexedArgs, PipelineId,
-    RectI32, Viewport,
+    BindGroupId, BufferId, BufferSlice, DispatchArgs, DrawArgs, DrawIndexedArgs,
+    DrawIndexedIndirectArgs, DrawIndexedIndirectCountArgs, FrameCameraContext,
+    GpuVisibilityIndirectCullArgs, PipelineId, RectI32, Viewport,
 };
 
 const COMMAND_BATCH_BIN_MAGIC: &[u8; 8] = b"NECB\x02\0\0\0";
@@ -122,6 +123,40 @@ fn encode_unit_command(out: &mut Vec<u8>, command: &RenderCommand) -> Result<(),
             put_u32(out, args.groups_y);
             put_u32(out, args.groups_z);
         }
+        RenderCommand::DrawIndexedIndirect(args) => {
+            put_u8(out, 14);
+            put_u32(out, args.buffer.get());
+            put_u64(out, args.offset);
+            put_u32(out, args.draw_count);
+            put_u32(out, args.stride);
+        }
+        RenderCommand::DrawIndexedIndirectCount(args) => {
+            put_u8(out, 15);
+            put_u32(out, args.buffer.get());
+            put_u64(out, args.offset);
+            put_u32(out, args.count_buffer.get());
+            put_u64(out, args.count_offset);
+            put_u32(out, args.max_draw_count);
+            put_u32(out, args.stride);
+        }
+        RenderCommand::DispatchVisibilityIndirectCull(args) => {
+            put_u8(out, 16);
+            put_u32(out, args.candidate_buffer.get());
+            put_u64(out, args.candidate_offset);
+            put_u32(out, args.indirect_buffer.get());
+            put_u64(out, args.indirect_offset);
+            put_u32(out, args.candidate_count);
+            put_u32(out, args.candidate_stride);
+            put_u32(out, args.command_stride);
+            put_u32(out, args.viewport_extent[0]);
+            put_u32(out, args.viewport_extent[1]);
+            for value in args.camera.position_ws { put_f32(out, value); }
+            for value in args.camera.forward_ws { put_f32(out, value); }
+            for value in args.camera.up_ws { put_f32(out, value); }
+            put_f32(out, args.camera.fov_y);
+            put_f32(out, args.camera.near);
+            put_f32(out, args.camera.far);
+        }
         _ => {
             return Err(format!(
                 "render command is not supported by binary unit batch: {command:?}"
@@ -194,6 +229,53 @@ fn decode_unit_command(r: &mut BinReader<'_>) -> Result<RenderCommand, String> {
             groups_y: r.u32()?,
             groups_z: r.u32()?,
         })),
+        14 => Ok(RenderCommand::DrawIndexedIndirect(DrawIndexedIndirectArgs {
+            buffer: BufferId::new(r.u32()?),
+            offset: r.u64()?,
+            draw_count: r.u32()?,
+            stride: r.u32()?,
+        })),
+        15 => Ok(RenderCommand::DrawIndexedIndirectCount(
+            DrawIndexedIndirectCountArgs {
+                buffer: BufferId::new(r.u32()?),
+                offset: r.u64()?,
+                count_buffer: BufferId::new(r.u32()?),
+                count_offset: r.u64()?,
+                max_draw_count: r.u32()?,
+                stride: r.u32()?,
+            },
+        )),
+        16 => {
+            let candidate_buffer = BufferId::new(r.u32()?);
+            let candidate_offset = r.u64()?;
+            let indirect_buffer = BufferId::new(r.u32()?);
+            let indirect_offset = r.u64()?;
+            let candidate_count = r.u32()?;
+            let candidate_stride = r.u32()?;
+            let command_stride = r.u32()?;
+            let viewport_extent = [r.u32()?, r.u32()?];
+            let camera = FrameCameraContext {
+                position_ws: [r.f32()?, r.f32()?, r.f32()?],
+                forward_ws: [r.f32()?, r.f32()?, r.f32()?],
+                up_ws: [r.f32()?, r.f32()?, r.f32()?],
+                fov_y: r.f32()?,
+                near: r.f32()?,
+                far: r.f32()?,
+            };
+            Ok(RenderCommand::DispatchVisibilityIndirectCull(
+                GpuVisibilityIndirectCullArgs {
+                    candidate_buffer,
+                    candidate_offset,
+                    indirect_buffer,
+                    indirect_offset,
+                    candidate_count,
+                    candidate_stride,
+                    command_stride,
+                    viewport_extent,
+                    camera,
+                },
+            ))
+        }
         tag => Err(format!("unknown render command batch binary tag {tag}")),
     }
 }

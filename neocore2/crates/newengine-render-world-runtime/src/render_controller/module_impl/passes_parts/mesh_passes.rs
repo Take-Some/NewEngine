@@ -20,7 +20,8 @@ use super::super::instancing::{
 use super::mesh_visibility::{
     distance_sq_to_camera, foliage_instance_budget, frustum_sphere_visible, primitive_budget,
     primitive_cast_shadows_enabled, primitive_shadow_max_distance, primitive_visibility_settings,
-    render_scene_culling_enabled, shadow_caster_visible, sort_by_distance_then_key, terrain_budget,
+    render_scene_culling_enabled, shadow_caster_visible, sort_and_truncate_by_distance_then_key,
+    sort_by_distance_then_key, sphere_within_render_distance, terrain_budget,
     terrain_cast_shadows_enabled, terrain_forward_max_distance, terrain_near_accept_distance,
     terrain_receive_shadows_enabled, transform_sphere,
 };
@@ -184,6 +185,16 @@ fn draw_procedural_terrain_for_pass(
         let distance_m = (center_ws - camera_position).length();
         let screen_coverage = sphere_screen_coverage_hint(radius_ws, distance_m);
         if runtime
+            && !sphere_within_render_distance(
+                camera_position,
+                center_ws,
+                radius_ws,
+                terrain_max_distance,
+            )
+        {
+            continue;
+        }
+        if runtime
             && terrain_culling_enabled
             && !frustum_sphere_visible(
                 terrain_frustum.as_ref().expect("terrain culling frustum"),
@@ -249,8 +260,8 @@ fn draw_procedural_terrain_for_pass(
         let material_plan = LitMaterialPlan::from_resolved(resolved.as_ref(), entry.base_color);
 
         let terrain_receive_shadows = terrain_receive_shadows_enabled(shadow_policy);
-        terrain_shadow_bound |= !pass.is_gbuffer() && terrain_receive_shadows;
-        let terrain_shadow_texture = if pass.is_gbuffer() || !terrain_receive_shadows {
+        terrain_shadow_bound |= terrain_receive_shadows;
+        let terrain_shadow_texture = if !terrain_receive_shadows {
             lit.white_texture
         } else {
             shadow_texture

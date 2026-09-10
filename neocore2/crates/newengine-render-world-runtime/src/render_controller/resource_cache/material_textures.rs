@@ -105,7 +105,20 @@ fn sanitize_material_texture_task_id(path: &str) -> String {
 }
 
 #[inline]
-fn material_texture_decode_request(path: &str, frame_index: u64) -> TaskRequest {
+fn material_texture_decode_task_priority(priority: MaterialTexturePriority) -> TaskPriority {
+    match priority.class {
+        MaterialTextureStreamingClass::LaunchCritical => TaskPriority::Critical,
+        MaterialTextureStreamingClass::StreamingCritical => TaskPriority::Interactive,
+        MaterialTextureStreamingClass::Secondary => TaskPriority::Background,
+    }
+}
+
+#[inline]
+fn material_texture_decode_request(
+    path: &str,
+    frame_index: u64,
+    priority: MaterialTexturePriority,
+) -> TaskRequest {
     let task_path = sanitize_material_texture_task_id(path);
     TaskRequest::new("material.texture.decode")
         .with_source("render.controller")
@@ -114,7 +127,7 @@ fn material_texture_decode_request(path: &str, frame_index: u64) -> TaskRequest 
         .with_lane(TaskLane::AssetIo)
         // Texture semantic decode is required for residency, but it is not frame-critical CPU
         // work. Simulation/RenderPrep interactive jobs must remain ahead of it in the shared pool.
-        .with_priority(TaskPriority::Background)
+        .with_priority(material_texture_decode_task_priority(priority))
         .with_frame_id(frame_index)
         .with_dependency_group(format!("frame.{frame_index}.asset-io.texture-decode"))
         .with_task_domain(task_domain::ENGINE_ASSETS)

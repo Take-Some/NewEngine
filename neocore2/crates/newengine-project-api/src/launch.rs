@@ -63,7 +63,7 @@ impl ProjectLaunchPreset {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedProjectLaunch {
     pub preset_id: String,
     pub profile: RuntimeLaunchProfile,

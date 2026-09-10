@@ -1,0 +1,48 @@
+{
+  "analysis": {
+    "analysisTargets": [
+      "architecture",
+      "module-boundaries",
+      "public-api-surface",
+      "runtime-configuration",
+      "build-graph"
+    ],
+    "buildTool": "unknown",
+    "compileCommand": "",
+    "languages": [],
+    "markers": {
+      "cargo": false,
+      "cmake": false,
+      "go": false,
+      "gradle": false,
+      "npm": false,
+      "python": false
+    },
+    "preferredReportFormat": "markdown",
+    "primaryLanguage": "unknown",
+    "testCommand": ""
+  },
+  "generatedAt": "2026-09-03T22:12:39.843495900+00:00",
+  "repository": {
+    "descriptorFile": ".suite-repository.json",
+    "descriptorPath": "\\\\?\\C:\\Users\\Aiden\\Documents\\Repos\\NorthStar\\NewEngine\\.suite-repository.json",
+    "gitDirectory": "\\\\?\\C:\\Users\\Aiden\\Documents\\Repos\\NorthStar\\NewEngine\\.git",
+    "name": "NewEngine",
+    "rootPath": "\\\\?\\C:\\Users\\Aiden\\Documents\\Repos\\NorthStar\\NewEngine",
+    "suiteVersion": "4.6.5"
+  },
+  "repositoryCache": {
+    "cachePath": "C:\\Users\\Aiden\\Documents\\Take Some\\NorthStar-Suite-V4\\.suite/repositories.json",
+    "enabled": true
+  },
+  "schema": "suite.repository.v1",
+  "workspace": {
+    "repositoryRoot": "\\\\?\\C:\\Users\\Aiden\\Documents\\Repos\\NorthStar\\NewEngine",
+    "runtimeDirectory": ".suite",
+    "safeRoots": [
+      "\\\\?\\C:\\Users\\Aiden\\Documents\\Take Some\\NorthStar-Suite-V4",
+      "\\\\?\\C:\\Users\\Aiden\\Documents\\Repos",
+      "\\\\?\\D:\\"
+    ]
+  }
+}

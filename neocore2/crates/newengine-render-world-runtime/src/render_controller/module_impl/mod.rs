@@ -31,6 +31,7 @@ mod scene_submit;
 mod shadow_cache;
 pub(crate) mod shadows;
 mod trace_policy;
+mod visibility_control;
 pub(crate) mod ui_node_surface;
 mod windowing;
 mod world_tick;

@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use newengine_assets::AssetServiceClient;
 use newengine_core::{Engine, EngineResult, StartupConfig};
-use newengine_project_runtime::RuntimeCompositionContext;
+use newengine_project_runtime::{ProjectRuntimeContext, RuntimeCompositionContext};
 
 use super::boot_options::RuntimeHostBootOption;
 
@@ -176,6 +176,7 @@ pub trait RuntimeHostFrontend<P: RuntimeHostAppProfile> {
 pub struct RuntimeHostLauncher<P> {
     pub(super) spec: RuntimeHostLaunchSpec,
     pub(super) profile: P,
+    pub(super) resolved_project: Option<ProjectRuntimeContext>,
 }
 
 impl<P> RuntimeHostLauncher<P>
@@ -184,7 +185,19 @@ where
 {
     #[inline]
     pub fn new(spec: RuntimeHostLaunchSpec, profile: P) -> Self {
-        Self { spec, profile }
+        Self {
+            spec,
+            profile,
+            resolved_project: None,
+        }
+    }
+
+    /// Install a launcher-authoritative project context so runtime bootstrap does
+    /// not reopen and re-resolve the same `game.toml` in this process.
+    #[inline]
+    pub fn with_resolved_project(mut self, project: ProjectRuntimeContext) -> Self {
+        self.resolved_project = Some(project);
+        self
     }
 
     #[inline]

@@ -20,6 +20,7 @@ fn camera_trace_sink() -> Option<&'static StdMutex<CameraTraceSink>> {
                 writer,
                 "frame,dt,view,raw_dx,raw_dy,routed_dx,routed_dy,sim_x,sim_y,sim_z,render_x,render_y,render_z,fixed_alpha,fixed_tick,runner,yaw,pitch,anchor_x,anchor_y,anchor_z,pivot_x,pivot_y,pivot_z,desired_x,desired_y,desired_z,collision_target,collision_current,rig_x,rig_y,rig_z,pre_x,pre_y,pre_z,final_x,final_y,final_z,frame_blend,frame_blend_alpha,spheres,aabbs,meshes,cached_meshes,bvh_builds,ctrl_z_start,ctrl_z_after_possess,ctrl_z_before_sync,ctrl_z_after_sync,ctrl_z_after_nav,zoom_z"
             );
+            let _ = writer.flush();
             Some(StdMutex::new(CameraTraceSink { writer, rows: 0 }))
         })
         .as_ref()
@@ -173,7 +174,5 @@ pub(super) fn trace_gameplay_camera_frame(
         zoom_z,
     );
     sink.rows = sink.rows.saturating_add(1);
-    if sink.rows % 30 == 0 {
-        let _ = sink.writer.flush();
-    }
+    let _ = sink.writer.flush();
 }

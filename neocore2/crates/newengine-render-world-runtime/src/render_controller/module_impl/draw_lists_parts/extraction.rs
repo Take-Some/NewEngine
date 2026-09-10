@@ -180,6 +180,21 @@ impl<'a> DrawListBuildCtx<'a> {
         Ok(Some(value))
     }
 
+    pub(crate) fn record_opaque_phase<T>(
+        &mut self,
+        phase: RenderGraphPassKind,
+        record: impl FnOnce(&mut RuntimeRenderController, &mut dyn RenderApi) -> EngineResult<T>,
+    ) -> EngineResult<Option<T>> {
+        if !self.lists.contains(RenderDrawListKind::OpaqueForward) {
+            return Ok(None);
+        }
+
+        let controller = &mut *self.controller;
+        let render = &mut *self.render;
+        let value = super::super::record_render_phase(render, phase, |r| record(controller, r))?;
+        Ok(Some(value))
+    }
+
     pub(crate) fn record_local_shadow_phase<T>(
         &mut self,
         record: impl FnOnce(&mut RuntimeRenderController, &mut dyn RenderApi) -> EngineResult<T>,
@@ -302,7 +317,7 @@ impl<'a> newengine_render_feature_api::DrawListBuildCtx for DrawListBuildCtx<'a>
         &mut self,
         ctx: &SceneExtractionCtx<'_>,
     ) -> EngineResult<()> {
-        let _ = self.record_shadow_phase(RenderGraphPassKind::GBuffer, |this, r| {
+        let _ = self.record_opaque_phase(RenderGraphPassKind::GBuffer, |this, r| {
             r.set_viewport(Viewport::full(ctx.viewport_extent))?;
             r.set_scissor(RectI32::new(
                 0,
@@ -457,7 +472,7 @@ impl<'a> newengine_render_feature_api::DrawListBuildCtx for DrawListBuildCtx<'a>
 
     fn record_primitive_mesh_gbuffer(&mut self, ctx: &SceneExtractionCtx<'_>) -> EngineResult<()> {
         let stage_started = std::time::Instant::now();
-        let _ = self.record_shadow_phase(RenderGraphPassKind::GBuffer, |this, r| {
+        let _ = self.record_opaque_phase(RenderGraphPassKind::GBuffer, |this, r| {
             r.set_viewport(Viewport::full(ctx.viewport_extent))?;
             r.set_scissor(RectI32::new(
                 0,

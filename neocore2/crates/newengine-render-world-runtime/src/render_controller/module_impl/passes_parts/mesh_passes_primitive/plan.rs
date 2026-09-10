@@ -84,6 +84,7 @@ pub(super) const PRIMITIVE_DRAW_RECEIVE_SHADOWS: u8 = 0x08;
 pub(super) const PRIMITIVE_DRAW_FOLIAGE_ROLE: u8 = 0x10;
 pub(super) const PRIMITIVE_DRAW_DECAL_ROLE: u8 = 0x20;
 pub(super) const PRIMITIVE_DRAW_AUTHORED_BASE_REQUIRED: u8 = 0x40;
+pub(super) const PRIMITIVE_DRAW_DEFERRED_OPAQUE_ROUTE: u8 = 0x80;
 #[inline]
 pub(super) fn primitive_draw_flags(options: &MeshRenderOptions) -> u8 {
     let mut flags = 0u8;
@@ -131,7 +132,11 @@ const SKY_MESH_ROLES: &[MeshRenderRole] = &[
     MeshRenderRole::WeatherVolume,
 ];
 
-const FORWARD_ONLY_OVERLAY_ROLES: &[MeshRenderRole] = &[MeshRenderRole::Decal];
+const FORWARD_ONLY_OVERLAY_ROLES: &[MeshRenderRole] = &[
+    MeshRenderRole::WorldTransparent,
+    MeshRenderRole::Decal,
+    MeshRenderRole::FirstPersonViewModel,
+];
 
 const NON_WORLD_VIEWPORT_ROLES: &[MeshRenderRole] = &[
     MeshRenderRole::CollisionProxy,
@@ -147,7 +152,7 @@ const PRIMITIVE_PASS_ROLE_CULL_RULES: &[PrimitivePassRoleCullRule] = &[
     PrimitivePassRoleCullRule {
         pass: SceneMeshPass::GBuffer,
         roles: FORWARD_ONLY_OVERLAY_ROLES,
-        reason: "decal_overlay_forward_only",
+        reason: "forward_only_overlay_role",
     },
     PrimitivePassRoleCullRule {
         pass: SceneMeshPass::Forward,
@@ -200,4 +205,35 @@ pub(super) fn recenter_model_translation(mut model: Mat4, camera_position: Vec3)
     cols[14] = camera_position.z + local_offset.z;
     model = Mat4::from_cols_array(&cols);
     model
+}
+
+#[cfg(test)]
+mod deferred_role_routing_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_character_body_is_gbuffer_only() {
+        let body = MeshRenderOptions::character_body();
+        assert_eq!(
+            primitive_role_cull_reason(&body, SceneMeshPass::GBuffer, true, true),
+            None
+        );
+        assert_eq!(
+            primitive_role_cull_reason(&body, SceneMeshPass::Forward, true, true),
+            Some("opaque_role_routed_to_deferred_gbuffer")
+        );
+    }
+
+    #[test]
+    fn deferred_first_person_view_model_is_forward_only() {
+        let view_model = MeshRenderOptions::first_person_view_model();
+        assert_eq!(
+            primitive_role_cull_reason(&view_model, SceneMeshPass::GBuffer, true, true),
+            Some("forward_only_overlay_role")
+        );
+        assert_eq!(
+            primitive_role_cull_reason(&view_model, SceneMeshPass::Forward, true, true),
+            None
+        );
+    }
 }

@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
-    Extent2D, RenderDrawListKind, RenderFrameEnvelope, RenderGraphDesc, RenderGraphPassKind,
-    TextureDesc, TextureId, UiDrawList, UiLayerDomain, UiLayerDrawPacket, UiLayerDrawPacketSet,
+    BufferId, DrawIndexedIndirectArgs, DrawIndexedIndirectCountArgs, Extent2D,
+    FrameCameraContext, GpuVisibilityIndirectCullArgs, RenderDrawListKind,
+    RenderFrameEnvelope, RenderGraphDesc, RenderGraphPassKind, TextureDesc, TextureId, UiDrawList,
+    UiLayerDomain, UiLayerDrawPacket, UiLayerDrawPacketSet,
 };
 use std::num::NonZeroU32;
 
@@ -126,6 +128,78 @@ fn binary_unit_batch_roundtrips_recording_scope_commands() {
         RenderCommand::SetDrawListKind { kind: None }
     ));
     assert!(matches!(decoded[3], RenderCommand::DiscardRecordedCommands));
+}
+
+#[test]
+fn binary_unit_batch_roundtrips_indexed_indirect_commands() {
+    let commands = BufferId::new(41);
+    let count = BufferId::new(42);
+    let encoded = encode_unit_command_batch_bin(&[
+        RenderCommand::DrawIndexedIndirect(DrawIndexedIndirectArgs {
+            buffer: commands,
+            offset: 64,
+            draw_count: 17,
+            stride: 32,
+        }),
+        RenderCommand::DrawIndexedIndirectCount(DrawIndexedIndirectCountArgs {
+            buffer: commands,
+            offset: 128,
+            count_buffer: count,
+            count_offset: 16,
+            max_draw_count: 4096,
+            stride: DrawIndexedIndirectCountArgs::COMMAND_SIZE,
+        }),
+    ])
+    .unwrap();
+    let decoded = decode_unit_command_batch_bin(&encoded).unwrap();
+
+    match decoded[0] {
+        RenderCommand::DrawIndexedIndirect(args) => {
+            assert_eq!(args.buffer, commands);
+            assert_eq!(args.offset, 64);
+            assert_eq!(args.draw_count, 17);
+            assert_eq!(args.stride, 32);
+        }
+        ref other => panic!("unexpected first command: {other:?}"),
+    }
+    match decoded[1] {
+        RenderCommand::DrawIndexedIndirectCount(args) => {
+            assert_eq!(args.buffer, commands);
+            assert_eq!(args.count_buffer, count);
+            assert_eq!(args.max_draw_count, 4096);
+            assert_eq!(args.stride, 20);
+        }
+        ref other => panic!("unexpected second command: {other:?}"),
+    }
+}
+
+#[test]
+fn binary_unit_batch_roundtrips_gpu_visibility_indirect_cull() {
+    let args = GpuVisibilityIndirectCullArgs::new(
+        BufferId::new(51),
+        256,
+        BufferId::new(52),
+        512,
+        91,
+        [1920, 1080],
+        FrameCameraContext {
+            position_ws: [1.0, 2.0, 3.0],
+            forward_ws: [0.0, 0.0, -1.0],
+            up_ws: [0.0, 1.0, 0.0],
+            fov_y: 1.1,
+            near: 0.05,
+            far: 1500.0,
+        },
+    );
+    let encoded = encode_unit_command_batch_bin(&[
+        RenderCommand::DispatchVisibilityIndirectCull(args),
+    ])
+    .unwrap();
+    let decoded = decode_unit_command_batch_bin(&encoded).unwrap();
+    match decoded[0] {
+        RenderCommand::DispatchVisibilityIndirectCull(decoded) => assert_eq!(decoded, args),
+        ref other => panic!("unexpected command: {other:?}"),
+    }
 }
 
 #[test]

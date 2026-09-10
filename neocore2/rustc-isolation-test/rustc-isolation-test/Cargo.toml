@@ -1,0 +1,9 @@
+[package]
+name = "rustc-isolation-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+syn = "3.0.4"
+
+[workspace]

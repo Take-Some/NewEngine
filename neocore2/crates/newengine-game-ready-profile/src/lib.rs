@@ -34,6 +34,21 @@ pub const GAME_READY_RUNTIME_PROFILE_ID: &str = "newengine.runtime-profile.game-
 /// Development tooling may pass a project-owned `game.toml`; packaged game/server builds place the
 /// same game descriptor next to the runtime executable. Engine `runtime.toml` is not
 /// a game descriptor and is never parsed here.
+pub fn launch_game_ready_profile_with_resolved(
+    payload: newengine_project_api::ResolvedProjectContextPayloadV1,
+    profile: GameReadyRuntimeProfile,
+) -> Result<(), String> {
+    let project = newengine_project_runtime::project_context_from_resolved_payload(payload)?;
+    std::env::set_var(newengine_project_api::GAME_MANIFEST_ENV, &project.manifest_path);
+    std::env::set_var(
+        newengine_project_api::PROJECT_LAUNCH_PRESET_ENV,
+        &project.launch.preset_id,
+    );
+    std::env::remove_var("NEWENGINE_PROJECT");
+    apply_game_ready_fps_env_policy();
+    GameReadyFpsApp::with_profile(profile).run_process_with_resolved_project(project)
+}
+
 pub fn launch_game_ready_profile_with(
     manifest_path: &std::path::Path,
     profile: GameReadyRuntimeProfile,

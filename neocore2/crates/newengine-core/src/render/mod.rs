@@ -169,6 +169,34 @@ pub trait RenderApi: Send {
 
     fn draw(&mut self, args: DrawArgs) -> EngineResult<()>;
     fn draw_indexed(&mut self, args: DrawIndexedArgs) -> EngineResult<()>;
+
+    #[inline]
+    fn draw_indexed_indirect(&mut self, _args: DrawIndexedIndirectArgs) -> EngineResult<()> {
+        Err(EngineError::other(
+            "render backend does not support indexed indirect draws",
+        ))
+    }
+
+    #[inline]
+    fn draw_indexed_indirect_count(
+        &mut self,
+        _args: DrawIndexedIndirectCountArgs,
+    ) -> EngineResult<()> {
+        Err(EngineError::other(
+            "render backend does not support indexed indirect-count draws",
+        ))
+    }
+
+    #[inline]
+    fn dispatch_visibility_indirect_cull(
+        &mut self,
+        _args: GpuVisibilityIndirectCullArgs,
+    ) -> EngineResult<()> {
+        Err(EngineError::other(
+            "render backend does not support GPU visibility indirect culling",
+        ))
+    }
+
     fn dispatch(&mut self, args: DispatchArgs) -> EngineResult<()>;
 
     /// Selects the render graph phase that subsequent recorded commands belong to.

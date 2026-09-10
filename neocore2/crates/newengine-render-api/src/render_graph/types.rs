@@ -122,6 +122,8 @@ impl Default for RenderGraphQueueKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RenderGraphPassKind {
     DepthPrepass,
+    /// GPU visibility/indirect-command preparation using previous-frame depth/Hi-Z.
+    VisibilityCull,
     ShadowMap,
     ShadowCascadeMap,
     LocalShadowMap,

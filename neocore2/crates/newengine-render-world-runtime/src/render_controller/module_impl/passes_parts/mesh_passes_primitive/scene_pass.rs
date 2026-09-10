@@ -97,6 +97,7 @@ pub(super) fn draw_primitives_for_pass(
     let mut entries: Vec<PrimitiveDrawEntry> = Vec::new();
     let mut sky_seen = 0usize;
     let mut sky_profile_culled = 0usize;
+    let mut visibility_feedback_culled = 0usize;
     for source in primitive_snapshot.entries.iter() {
         let prim = source.primitive;
         let render_model = source.render_model;
@@ -122,34 +123,43 @@ pub(super) fn draw_primitives_for_pass(
         if sky_role {
             sky_seen += 1;
         }
-        if let Some(culled_reason) = primitive_role_cull_reason(
+        let role_cull_reason = primitive_role_cull_reason(
             mesh_render_options,
             pass,
             this.runtime_profile().draw_sky_visuals(),
             deferred,
-        ) {
-            if sky_role {
-                sky_profile_culled += 1;
+        );
+        if role_cull_reason == Some("opaque_role_routed_to_deferred_gbuffer") {
+            draw_flags |= PRIMITIVE_DRAW_DEFERRED_OPAQUE_ROUTE;
+        }
+        if let Some(culled_reason) = role_cull_reason {
+            // The generic deferred role gate cannot classify material alpha yet.
+            // Delay only its opaque-forward decision until the resolved material is
+            // known; all structural role culls remain immediate.
+            if culled_reason != "opaque_role_routed_to_deferred_gbuffer" {
+                if sky_role {
+                    sky_profile_culled += 1;
+                }
+                if runtime && (route_diagnostics_due(this.frame.frame_index)) {
+                    newengine_ulog_api::ulog::debug!(
+                        "mesh.role.route: definition='{}' asset='{}' role={:?} transform_policy={:?} pass='{}' emitted=false culled_reason='{}' asset_source='engine.assets.definitions'",
+                        definition_label,
+                        asset_label,
+                        mesh_render_options.role,
+                        mesh_render_options.transform_policy,
+                        pass.label(),
+                        culled_reason
+                    );
+                }
+                if background_sky && this.frame.frame_index <= 2 {
+                    newengine_ulog_api::ulog::info!(
+                        "sky.draw_list: authored background dome skipped policy='mesh-render-role-routing' role={:?} reason='{}'",
+                        mesh_render_options.role,
+                        culled_reason
+                    );
+                }
+                continue;
             }
-            if runtime && (route_diagnostics_due(this.frame.frame_index)) {
-                newengine_ulog_api::ulog::debug!(
-                    "mesh.role.route: definition='{}' asset='{}' role={:?} transform_policy={:?} pass='{}' emitted=false culled_reason='{}' asset_source='engine.assets.definitions'",
-                    definition_label,
-                    asset_label,
-                    mesh_render_options.role,
-                    mesh_render_options.transform_policy,
-                    pass.label(),
-                    culled_reason
-                );
-            }
-            if background_sky && this.frame.frame_index <= 2 {
-                newengine_ulog_api::ulog::info!(
-                    "sky.draw_list: authored background dome skipped policy='mesh-render-role-routing' role={:?} reason='{}'",
-                    mesh_render_options.role,
-                    culled_reason
-                );
-            }
-            continue;
         }
         if has_primitive_flag(draw_flags, PRIMITIVE_DRAW_FOLIAGE_ROLE) {
             if let Some(foliage) = source.foliage_runtime {
@@ -159,18 +169,31 @@ pub(super) fn draw_primitives_for_pass(
                 }
             }
         }
-        if runtime && !follows_view && visibility_settings.culling_enabled {
-            if let Some((local_center, local_radius)) = source.local_bounds {
-                let (center_ws, radius_ws) =
-                    transform_sphere(render_model, local_center, local_radius);
-                if !frustum_sphere_visible(
-                    &visibility_settings.frustum,
+        let transformed_bounds = source
+            .local_bounds
+            .map(|(local_center, local_radius)| {
+                transform_sphere(render_model, local_center, local_radius)
+            });
+        if runtime && !follows_view && !sky_role {
+            if let Some((center_ws, radius_ws)) = transformed_bounds {
+                if !sphere_within_render_distance(
                     camera_position,
                     center_ws,
                     radius_ws,
                     visibility_settings.max_distance,
-                    visibility_settings.near_accept_distance,
                 ) {
+                    continue;
+                }
+                if visibility_settings.culling_enabled
+                    && !frustum_sphere_visible(
+                        &visibility_settings.frustum,
+                        camera_position,
+                        center_ws,
+                        radius_ws,
+                        visibility_settings.max_distance,
+                        visibility_settings.near_accept_distance,
+                    )
+                {
                     continue;
                 }
             } else if distance_sq_to_camera(render_model, camera_position)
@@ -186,12 +209,23 @@ pub(super) fn draw_primitives_for_pass(
         };
         let screen_coverage = if follows_view || sky_role {
             1.0
-        } else if let Some((local_center, local_radius)) = source.local_bounds {
-            let (center_ws, radius_ws) = transform_sphere(render_model, local_center, local_radius);
+        } else if let Some((center_ws, radius_ws)) = transformed_bounds {
             sphere_screen_coverage_hint(radius_ws, (center_ws - camera_position).length())
         } else {
             sphere_screen_coverage_hint(1.0, distance_sq.sqrt())
         };
+        if runtime
+            && !follows_view
+            && !sky_role
+            && this.visibility_should_cull_world_primitive(
+                source.entity_key,
+                distance_sq.sqrt(),
+                screen_coverage,
+            )
+        {
+            visibility_feedback_culled = visibility_feedback_culled.saturating_add(1);
+            continue;
+        }
         let entry = (
             distance_sq,
             source.entity_key,
@@ -212,20 +246,22 @@ pub(super) fn draw_primitives_for_pass(
         }
     }
     sort_by_distance_then_key(&mut sky_entries);
-    sort_by_distance_then_key(&mut foliage_entries);
-    sort_by_distance_then_key(&mut entries);
-    foliage_entries.truncate(foliage_instance_budget(runtime, false));
-    entries.truncate(primitive_budget(runtime, false));
+    sort_and_truncate_by_distance_then_key(
+        &mut foliage_entries,
+        foliage_instance_budget(runtime, false),
+    );
+    sort_and_truncate_by_distance_then_key(&mut entries, primitive_budget(runtime, false));
     let scan_ms = scan_started
         .map(|started| started.elapsed().as_secs_f64() * 1000.0)
         .unwrap_or(0.0);
     let plan_started = stage_profile.then(std::time::Instant::now);
     if runtime && (route_diagnostics_due(this.frame.frame_index)) {
         newengine_ulog_api::ulog::debug!(
-            "sky.draw_list: seen={} emitted={} profile_culled={} pass='viewport_forward' depth_write=false shadow=false route='mesh_render_options' opaque_candidates={} opaque_budget={} draw_sky_visuals={}",
+            "sky.draw_list: seen={} emitted={} profile_culled={} visibility_feedback_culled={} pass='viewport_forward' depth_write=false shadow=false route='mesh_render_options' opaque_candidates={} opaque_budget={} draw_sky_visuals={}",
             sky_seen,
             sky_entries.len(),
             sky_profile_culled,
+            visibility_feedback_culled,
             entries.len(),
             primitive_budget(runtime, false),
             this.runtime_profile().draw_sky_visuals()
@@ -290,6 +326,19 @@ pub(super) fn draw_primitives_for_pass(
                     .resolved_lit_plans
                     .resolve(&*mats, material_ref, prim.color);
             let mut material_plan = owned_material_plan.as_borrowed();
+            let forward_only_alpha_surface =
+                material_plan.alpha_blend || material_plan.alpha_cutoff > 0.0;
+            // Deferred is currently an opaque-only material path. Masked surfaces
+            // need their authored cutoff and alpha-blended surfaces need forward
+            // composition; never reinterpret arbitrary RGBA texture alpha in GBuffer.
+            if pass.is_gbuffer() && forward_only_alpha_surface {
+                continue;
+            }
+            if has_primitive_flag(draw_flags, PRIMITIVE_DRAW_DEFERRED_OPAQUE_ROUTE)
+                && !forward_only_alpha_surface
+            {
+                continue;
+            }
             if let Some(runtime) = sky_runtime.as_ref() {
                 material_plan.uv_transform = runtime.uv_transform;
                 material_plan.material_params = runtime.material_params;
@@ -398,12 +447,11 @@ pub(super) fn draw_primitives_for_pass(
             } else {
                 lit.clamp_sampler
             };
-            let material_shadow_texture =
-                if pass.is_gbuffer() || !receive_shadows || !material_plan.receive_shadows {
-                    lit.white_texture
-                } else {
-                    shadow_texture
-                };
+            let material_shadow_texture = if !receive_shadows || !material_plan.receive_shadows {
+                lit.white_texture
+            } else {
+                shadow_texture
+            };
             let material_local_shadow_texture =
                 if pass.is_gbuffer() || !receive_shadows || !material_plan.receive_shadows {
                     lit.white_texture
@@ -658,7 +706,7 @@ pub(super) fn draw_primitives_for_pass(
             .unwrap_or(0.0);
         let material_plan_cache = this.gpu.material.resolved_lit_plans.stats();
         newengine_ulog_api::ulog::info!(
-            "primitive.stage.profile: frame={} pass='{}' total_ms={:.3} scan_ms={:.3} snapshot_reused={} snapshot_entries={} queried={} material_plan_entries={} material_plan_hits={} material_plan_misses={} material_plan_negative_hits={} material_plan_invalidations={} plan_batch_ms={:.3} upload_ms={:.3} replay_ms={:.3} batches={} instances={} bytes={}",
+            "primitive.stage.profile: frame={} pass='{}' total_ms={:.3} scan_ms={:.3} snapshot_reused={} snapshot_entries={} queried={} visibility_feedback_culled={} material_plan_entries={} material_plan_hits={} material_plan_misses={} material_plan_negative_hits={} material_plan_invalidations={} plan_batch_ms={:.3} upload_ms={:.3} replay_ms={:.3} batches={} instances={} bytes={}",
             this.frame.frame_index,
             pass.label(),
             total_ms,
@@ -666,6 +714,7 @@ pub(super) fn draw_primitives_for_pass(
             snapshot_reused,
             primitive_snapshot.entries.len(),
             primitive_snapshot.queried_count,
+            visibility_feedback_culled,
             material_plan_cache.entries,
             material_plan_cache.hits,
             material_plan_cache.misses,

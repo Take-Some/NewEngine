@@ -126,34 +126,52 @@ where
         }
         let project_launch_request =
             project_launch_request_from_environment(|name| host_context.environment_var(name));
-        let game_context = match game_request {
-            Some(request) => {
-                let context = load_project_from_request_with_launch(
-                    &request,
-                    project_launch_request.as_deref(),
-                )
-                .map_err(|error| {
-                    EngineError::Other(format!(
-                        "game manifest load failed request='{}': {error}",
-                        request.display()
-                    ))
-                })?;
-                let editor_owned = editor_project_request.is_some();
-                apply_project_environment(&host_context, &context, editor_owned);
-                self.early_log(format_args!(
-                    "game.manifest.loaded id={} root={} manifest={} mounts={} launch={} launch_profile={} runtime_profile={} editor_owned={}",
-                    context.manifest.id,
-                    context.project_root.display(),
-                    context.manifest_path.display(),
-                    context.mounts.mounts().len(),
-                    context.launch.preset_id,
-                    context.launch.profile.id(),
-                    context.launch.runtime_profile.as_deref().unwrap_or("app-default"),
-                    editor_owned,
-                ));
-                Some(context)
+        let game_context = if let Some(context) = self.resolved_project.as_ref() {
+            let context = context.clone();
+            let editor_owned = editor_project_request.is_some();
+            apply_project_environment(&host_context, &context, editor_owned);
+            self.early_log(format_args!(
+                "game.manifest.resolved_payload id={} root={} manifest={} mounts={} launch={} launch_profile={} runtime_profile={} editor_owned={}",
+                context.manifest.id,
+                context.project_root.display(),
+                context.manifest_path.display(),
+                context.mounts.mounts().len(),
+                context.launch.preset_id,
+                context.launch.profile.id(),
+                context.launch.runtime_profile.as_deref().unwrap_or("app-default"),
+                editor_owned,
+            ));
+            Some(context)
+        } else {
+            match game_request {
+                Some(request) => {
+                    let context = load_project_from_request_with_launch(
+                        &request,
+                        project_launch_request.as_deref(),
+                    )
+                    .map_err(|error| {
+                        EngineError::Other(format!(
+                            "game manifest load failed request='{}': {error}",
+                            request.display()
+                        ))
+                    })?;
+                    let editor_owned = editor_project_request.is_some();
+                    apply_project_environment(&host_context, &context, editor_owned);
+                    self.early_log(format_args!(
+                        "game.manifest.loaded id={} root={} manifest={} mounts={} launch={} launch_profile={} runtime_profile={} editor_owned={}",
+                        context.manifest.id,
+                        context.project_root.display(),
+                        context.manifest_path.display(),
+                        context.mounts.mounts().len(),
+                        context.launch.preset_id,
+                        context.launch.profile.id(),
+                        context.launch.runtime_profile.as_deref().unwrap_or("app-default"),
+                        editor_owned,
+                    ));
+                    Some(context)
+                }
+                None => None,
             }
-            None => None,
         };
         let runtime_context = game_context
             .as_ref()

@@ -18,7 +18,9 @@ pub use newengine_transform_api::{Children, Parent, TransformDirty};
 pub use hierarchy::{despawn_hierarchies, despawn_hierarchy, set_parent};
 
 #[cfg(feature = "ecs")]
-pub use propagate::{ensure_transform_outputs, propagate_transforms};
+pub use propagate::{
+    ensure_transform_outputs, propagate_transforms, TransformPropagationChanges,
+};
 
 #[cfg(feature = "ecs")]
 pub use world_space::{

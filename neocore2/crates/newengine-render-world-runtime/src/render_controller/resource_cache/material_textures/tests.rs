@@ -1,17 +1,33 @@
 use super::*;
 
 #[test]
-fn texture_decode_is_asset_io_background_priority_not_frame_interactive() {
-    let request = material_texture_decode_request("textures/characters/abby.ytd@m00_base", 42);
-    assert_eq!(request.lane, TaskLane::AssetIo);
-    assert_eq!(request.priority, TaskPriority::Background);
-    assert_eq!(request.frame_id, Some(42));
-    assert_eq!(request.task_domain, task_domain::ENGINE_ASSETS);
-    assert_eq!(request.task_pass, task_pass::TEXTURE_DECODE);
-    assert!(request
-        .dependency_group
-        .as_deref()
-        .is_some_and(|group| group == "frame.42.asset-io.texture-decode"));
+fn texture_decode_preserves_semantic_scheduler_priority() {
+    for (priority, expected) in [
+        (
+            MaterialTexturePriority::secondary(),
+            TaskPriority::Background,
+        ),
+        (
+            MaterialTexturePriority::streaming_visible(),
+            TaskPriority::Interactive,
+        ),
+        (
+            MaterialTexturePriority::launch_world(),
+            TaskPriority::Critical,
+        ),
+    ] {
+        let request =
+            material_texture_decode_request("textures/characters/abby.ytd@m00_base", 42, priority);
+        assert_eq!(request.lane, TaskLane::AssetIo);
+        assert_eq!(request.priority, expected);
+        assert_eq!(request.frame_id, Some(42));
+        assert_eq!(request.task_domain, task_domain::ENGINE_ASSETS);
+        assert_eq!(request.task_pass, task_pass::TEXTURE_DECODE);
+        assert!(request
+            .dependency_group
+            .as_deref()
+            .is_some_and(|group| group == "frame.42.asset-io.texture-decode"));
+    }
 }
 
 #[test]

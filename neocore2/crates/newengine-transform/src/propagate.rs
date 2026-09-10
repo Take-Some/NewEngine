@@ -20,6 +20,18 @@ pub struct TransformPropagationScratch {
     pub ensure_ids: Vec<EntityId>,
 }
 
+/// Per-propagation journal of entities whose published world matrix actually changed.
+///
+/// This is intentionally a reusable ECS resource rather than an event allocation. High-fanout
+/// consumers such as rendering can first compare `tick`, then update only these entities instead
+/// of scanning every GlobalTransform in a mostly static world.
+#[derive(Default)]
+pub struct TransformPropagationChanges {
+    pub tick: u64,
+    pub generation: u64,
+    pub entities: Vec<EntityId>,
+}
+
 /// Ensures derived outputs (`GlobalTransform`, `WorldPose`) exist for all entities with `Transform`.
 ///
 /// Call once per frame before propagation (or on-demand when authoring).
@@ -168,28 +180,114 @@ pub fn propagate_transforms(world: &mut World) {
         }
     }
 
+    let mut published_changes =
+        core::mem::take(world.resource_mut_or_insert_default::<TransformPropagationChanges>());
+    published_changes.tick = world.tick();
+    published_changes.generation = published_changes.generation.saturating_add(1).max(1);
+    published_changes.entities.clear();
+
     // 4) Write-back.
+    //
+    // Derived transforms are high-fanout inputs for rendering, bounds, shadows, audio and
+    // streaming. Marking every GlobalTransform/WorldPose as changed on every frame makes a
+    // static world look fully dynamic to all downstream systems. Recompute remains conservative
+    // for now, but publish change-tracking only when the derived value actually differs.
     for (i, &id) in scratch.ids.iter().enumerate() {
         let m = scratch.out[i];
-
-        if let Some(gt) = world.get_mut_tracked::<GlobalTransform>(id) {
-            gt.0 = m;
+        let global_changed = world
+            .get::<GlobalTransform>(id)
+            .map(|gt| gt.0.to_cols_array() != m.to_cols_array())
+            .unwrap_or(true);
+        if global_changed {
+            if let Some(gt) = world.get_mut_tracked::<GlobalTransform>(id) {
+                gt.0 = m;
+                published_changes.entities.push(id);
+            }
         }
 
-        if let Some(wp) = world.get_mut_tracked::<WorldPose>(id) {
-            let (scale, rot, trans) = m.to_scale_rotation_translation();
-            let (yaw, pitch, roll) = rot.to_euler(EulerRot::YXZ);
-
-            wp.world_pos = trans;
-            wp.yaw = yaw;
-            wp.pitch = pitch;
-            wp.roll = roll;
-            wp.world_scale = scale;
+        let (scale, rot, trans) = m.to_scale_rotation_translation();
+        let (yaw, pitch, roll) = rot.to_euler(EulerRot::YXZ);
+        let pose_changed = world
+            .get::<WorldPose>(id)
+            .map(|wp| {
+                wp.world_pos != trans
+                    || wp.yaw != yaw
+                    || wp.pitch != pitch
+                    || wp.roll != roll
+                    || wp.world_scale != scale
+            })
+            .unwrap_or(true);
+        if pose_changed {
+            if let Some(wp) = world.get_mut_tracked::<WorldPose>(id) {
+                wp.world_pos = trans;
+                wp.yaw = yaw;
+                wp.pitch = pitch;
+                wp.roll = roll;
+                wp.world_scale = scale;
+            }
         }
 
         let _ = world.remove::<TransformDirty>(id);
     }
 
-    // Put scratch back.
+    // Put reusable journals/scratch back.
+    *world.resource_mut_or_insert_default::<TransformPropagationChanges>() = published_changes;
     *world.resource_mut_or_insert_default::<TransformPropagationScratch>() = scratch;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use newengine_math::Vec3;
+
+    #[test]
+    fn unchanged_static_transform_does_not_republish_derived_change_ticks() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        assert!(world.insert(entity, Transform::default()));
+        propagate_transforms(&mut world);
+        let baseline_tick = world.tick();
+
+        world.advance_tick();
+        propagate_transforms(&mut world);
+
+        assert!(
+            !world.any_changed_since::<GlobalTransform>(baseline_tick),
+            "unchanged GlobalTransform must stay clean across propagation"
+        );
+        assert!(
+            !world.any_changed_since::<WorldPose>(baseline_tick),
+            "unchanged WorldPose must stay clean across propagation"
+        );
+        let changes = world.resource::<TransformPropagationChanges>().unwrap();
+        assert_eq!(changes.tick, world.tick());
+        assert_eq!(changes.generation, 2);
+        assert!(changes.entities.is_empty());
+    }
+
+    #[test]
+    fn real_transform_motion_republishes_derived_change_ticks() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        assert!(world.insert(entity, Transform::default()));
+        propagate_transforms(&mut world);
+        let baseline_tick = world.tick();
+
+        world.advance_tick();
+        world.get_mut::<Transform>(entity).unwrap().position = Vec3::new(3.0, 2.0, -1.0);
+        propagate_transforms(&mut world);
+
+        assert!(world.any_changed_since::<GlobalTransform>(baseline_tick));
+        assert!(world.any_changed_since::<WorldPose>(baseline_tick));
+        let translation = world
+            .get::<GlobalTransform>(entity)
+            .unwrap()
+            .0
+            .transform_point3(Vec3::ZERO);
+        assert!((translation - Vec3::new(3.0, 2.0, -1.0)).length() < 1.0e-6);
+        let changes = world.resource::<TransformPropagationChanges>().unwrap();
+        assert_eq!(changes.tick, world.tick());
+        assert_eq!(changes.generation, 2);
+        assert_eq!(changes.entities.as_slice(), &[entity]);
+    }
 }

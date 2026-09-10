@@ -8,6 +8,9 @@ pub enum BufferUsage {
     Index,
     Uniform,
     Storage,
+    /// GPU-generated draw command/count buffer. Concrete backends should make this writable from
+    /// compute as well as consumable by their indirect draw stage.
+    Indirect,
     Staging,
 }
 

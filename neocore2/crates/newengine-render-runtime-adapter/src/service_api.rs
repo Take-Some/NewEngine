@@ -3,7 +3,8 @@ use std::sync::Mutex;
 use newengine_core::render::{
     BeginFrameDesc, BeginRenderTargetDesc, BindGroupDesc, BindGroupId, BindGroupLayoutDesc,
     BindGroupLayoutId, BufferDesc, BufferId, BufferSlice, ComputePipelineDesc, DispatchArgs,
-    DrawArgs, DrawIndexedArgs, IndexFormat, PipelineDesc, PipelineId, PipelineWarmupDesc,
+    DrawArgs, DrawIndexedArgs, DrawIndexedIndirectArgs, DrawIndexedIndirectCountArgs,
+    GpuVisibilityIndirectCullArgs, IndexFormat, PipelineDesc, PipelineId, PipelineWarmupDesc,
     PipelineWarmupReport, RectI32, RenderApi, RenderBackendEvent, RenderDiagnosticsSnapshot,
     RenderDrawListKind, RenderFrameEnvelope, RenderGraphCompileReport, RenderGraphDesc,
     RenderGraphPassKind, RenderGraphSubmitReport, RenderGraphValidationReport, RenderTargetDesc,
@@ -322,6 +323,24 @@ impl RenderApi for ServiceBackedRenderApi {
 
     fn draw_indexed(&mut self, args: DrawIndexedArgs) -> EngineResult<()> {
         self.queue_unit(RenderCommand::DrawIndexed(args))
+    }
+
+    fn draw_indexed_indirect(&mut self, args: DrawIndexedIndirectArgs) -> EngineResult<()> {
+        self.queue_unit(RenderCommand::DrawIndexedIndirect(args))
+    }
+
+    fn draw_indexed_indirect_count(
+        &mut self,
+        args: DrawIndexedIndirectCountArgs,
+    ) -> EngineResult<()> {
+        self.queue_unit(RenderCommand::DrawIndexedIndirectCount(args))
+    }
+
+    fn dispatch_visibility_indirect_cull(
+        &mut self,
+        args: GpuVisibilityIndirectCullArgs,
+    ) -> EngineResult<()> {
+        self.queue_unit(RenderCommand::DispatchVisibilityIndirectCull(args))
     }
 
     fn dispatch(&mut self, args: DispatchArgs) -> EngineResult<()> {

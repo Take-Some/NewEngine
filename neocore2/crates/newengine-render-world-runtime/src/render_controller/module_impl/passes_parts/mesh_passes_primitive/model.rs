@@ -36,14 +36,15 @@ pub(crate) fn draw_model_components(
             .get::<MeshRenderOptions>(entity)
             .cloned()
             .unwrap_or_else(|| bundle.configuration.render_options.clone());
-        if primitive_role_cull_reason(
+        let role_cull_reason = primitive_role_cull_reason(
             &render_options,
             pass,
             this.runtime_profile().draw_sky_visuals(),
             deferred,
-        )
-        .is_some()
-        {
+        );
+        let deferred_forward_material_route =
+            role_cull_reason == Some("opaque_role_routed_to_deferred_gbuffer");
+        if role_cull_reason.is_some() && !deferred_forward_material_route {
             continue;
         }
 
@@ -110,6 +111,14 @@ pub(crate) fn draw_model_components(
                 LitMaterialPlan::from_resolved(Some(&resolved), part.material.fallback_color);
             for (channel, tint_channel) in material_plan.base_color.iter_mut().zip(tint) {
                 *channel *= tint_channel;
+            }
+            let forward_only_alpha_surface =
+                material_plan.alpha_blend || material_plan.alpha_cutoff > 0.0;
+            if pass.is_gbuffer() && forward_only_alpha_surface {
+                continue;
+            }
+            if deferred_forward_material_route && !forward_only_alpha_surface {
+                continue;
             }
 
             let player_visual = world
@@ -187,10 +196,7 @@ pub(crate) fn draw_model_components(
                     }
                 }
             };
-            let receive_shadow_texture = if matches!(pass, SceneMeshPass::Forward)
-                && receives_shadows
-                && material_plan.receive_shadows
-            {
+            let receive_shadow_texture = if receives_shadows && material_plan.receive_shadows {
                 shadow_texture
             } else {
                 lit.white_texture

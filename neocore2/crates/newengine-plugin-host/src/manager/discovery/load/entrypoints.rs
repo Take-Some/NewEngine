@@ -159,6 +159,7 @@ impl PluginManager {
         let planning = crate::host_context::with_host_context(&self.host, || {
             crate::host_context::composition_planning_snapshot()
         });
+        let inventory_count = inventories.len();
         let frozen = build_frozen_composition_plan(&inventories, &planning);
         crate::host_context::with_host_context(&self.host, || {
             self.host.freeze_composition_plan(frozen.plan.clone())
@@ -171,10 +172,20 @@ impl PluginManager {
             message,
         })?;
 
+        // Composition freeze already paid for full verified discovery. Retain those
+        // authoritative graphs for the immediately following bootstrap/engine load
+        // instead of hashing and parsing the same plugin roots a second time.
+        self.composition_discovery_cache.clear();
+        for (graph, _) in inventories {
+            self.composition_discovery_cache
+                .insert(graph.dir.clone(), graph);
+        }
+
         newengine_ulog_api::ulog::info!(
-            "plugins: authoritative composition plan frozen roots={} gateways={}",
-            inventories.len(),
+            "plugins: authoritative composition plan frozen roots={} gateways={} discovery_reuse_roots={}",
+            inventory_count,
             frozen.plan.gateway_ids().len(),
+            self.composition_discovery_cache.len(),
         );
         self.frozen_composition_plan = Some(frozen);
         Ok(())
@@ -182,6 +193,8 @@ impl PluginManager {
     #[inline]
     pub fn invalidate_discovery_cache(&mut self) {
         self.discovery_cache = None;
+        self.composition_discovery_cache.clear();
+        self.targeted_discovery_cache = None;
     }
 
     #[inline]
@@ -191,9 +204,11 @@ impl PluginManager {
 
     #[inline]
     pub fn has_discovery_cache_for_dir(&self, dir: &Path) -> bool {
+        let dir = canonicalize_if_exists(dir);
         self.discovery_cache
             .as_ref()
-            .is_some_and(|graph| graph.dir == canonicalize_if_exists(dir))
+            .is_some_and(|graph| graph.dir == dir)
+            || self.composition_discovery_cache.contains_key(&dir)
     }
 
     pub fn begin_engine_incremental_load_from_discovery_graph(

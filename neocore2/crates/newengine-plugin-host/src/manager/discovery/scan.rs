@@ -1,5 +1,6 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+use newengine_math::collections_prelude::NeHashMap as HashMap;
 use std::path::{Path, PathBuf};
 
 use super::graph::{DiscoveryGraph, ScannedDynlib, ScannedDynlibKind};
@@ -94,23 +95,35 @@ pub(super) fn scan_plugins_dir(dir: &Path) -> Result<DiscoveryGraph, PluginLoadE
     })
 }
 
-/// Discovers candidates for one explicit plugin id without hashing unrelated DLLs.
-///
-/// The sidecar is inventory metadata, so reading it is enough to eliminate siblings
-/// that cannot satisfy the requested identity. Matching artifacts are then routed
-/// through `scan_dynamic_lib`, preserving the normal SHA-256 and descriptor checks.
-pub(super) fn scan_plugin_id(
+#[derive(Debug, Clone)]
+pub(crate) struct TargetedDiscoveryInventory {
+    pub(super) dir: PathBuf,
+    pub(super) entries_total: usize,
+    skipped_non_dynlib: usize,
+    candidate_paths: HashMap<String, Vec<PathBuf>>,
+    scan_errors: Vec<String>,
+}
+
+impl TargetedDiscoveryInventory {
+    #[inline]
+    pub(super) fn candidate_id_count(&self) -> usize {
+        self.candidate_paths.len()
+    }
+}
+
+/// Reads lightweight identity metadata for every runtime DLL once, allowing a
+/// sequence of targeted plugin-id lookups to reuse the same directory inventory.
+/// Artifact SHA-256 remains deferred until a candidate is actually selected.
+pub(super) fn scan_targeted_inventory(
     dir: &Path,
-    plugin_id: &str,
-) -> Result<DiscoveryGraph, PluginLoadError> {
+) -> Result<TargetedDiscoveryInventory, PluginLoadError> {
     let rd = std::fs::read_dir(dir).map_err(|e| PluginLoadError {
         path: dir.to_path_buf(),
         message: format!("read_dir failed: {e}"),
     })?;
-    let plugin_id = plugin_id.trim();
     let mut entries_total = 0usize;
     let mut skipped_non_dynlib = 0usize;
-    let mut matching_paths = Vec::<PathBuf>::new();
+    let mut candidate_paths: HashMap<String, Vec<PathBuf>> = HashMap::default();
     let mut scan_errors = Vec::<String>::new();
 
     for ent in rd {
@@ -124,7 +137,6 @@ pub(super) fn scan_plugin_id(
             skipped_non_dynlib = skipped_non_dynlib.saturating_add(1);
             continue;
         }
-
         let manifest = match read_manifest_metadata(&path) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -132,22 +144,64 @@ pub(super) fn scan_plugin_id(
                 continue;
             }
         };
-        let matches_id = manifest
+        let signature_id = manifest
             .signature
             .as_ref()
-            .is_some_and(|signature| signature.id == plugin_id)
-            || manifest
-                .descriptor
-                .as_ref()
-                .is_some_and(|descriptor| descriptor.id == plugin_id);
-        if matches_id {
-            matching_paths.push(path);
+            .map(|signature| signature.id.as_str());
+        if let Some(signature) = manifest.signature.as_ref() {
+            candidate_paths
+                .entry(signature.id.clone())
+                .or_default()
+                .push(path.clone());
+        }
+        if let Some(descriptor) = manifest.descriptor.as_ref() {
+            if signature_id != Some(descriptor.id.as_str()) {
+                candidate_paths
+                    .entry(descriptor.id.clone())
+                    .or_default()
+                    .push(path.clone());
+            }
         }
     }
+    for paths in candidate_paths.values_mut() {
+        paths.sort_by_key(|path| sort_key(path));
+    }
+    Ok(TargetedDiscoveryInventory {
+        dir: dir.to_path_buf(),
+        entries_total,
+        skipped_non_dynlib,
+        candidate_paths,
+        scan_errors,
+    })
+}
 
-    matching_paths.sort_by_key(|path| sort_key(path));
+/// Discovers candidates for one explicit plugin id without hashing unrelated DLLs.
+///
+/// The sidecar is inventory metadata, so reading it is enough to eliminate siblings
+/// that cannot satisfy the requested identity. Matching artifacts are then routed
+/// through `scan_dynamic_lib`, preserving the normal SHA-256 and descriptor checks.
+#[cfg(test)]
+pub(super) fn scan_plugin_id(
+    dir: &Path,
+    plugin_id: &str,
+) -> Result<DiscoveryGraph, PluginLoadError> {
+    let inventory = scan_targeted_inventory(dir)?;
+    scan_plugin_id_from_inventory(&inventory, plugin_id)
+}
+
+pub(super) fn scan_plugin_id_from_inventory(
+    inventory: &TargetedDiscoveryInventory,
+    plugin_id: &str,
+) -> Result<DiscoveryGraph, PluginLoadError> {
+    let plugin_id = plugin_id.trim();
+    let matching_paths = inventory
+        .candidate_paths
+        .get(plugin_id)
+        .cloned()
+        .unwrap_or_default();
     let had_matching_paths = !matching_paths.is_empty();
     let mut matching_failures = Vec::<String>::new();
+    let mut scan_errors = inventory.scan_errors.clone();
     let mut items = Vec::<ScannedDynlib>::with_capacity(matching_paths.len());
     for path in matching_paths {
         match scan_dynamic_lib(&path) {
@@ -162,7 +216,7 @@ pub(super) fn scan_plugin_id(
 
     if had_matching_paths && items.is_empty() {
         return Err(PluginLoadError {
-            path: dir.to_path_buf(),
+            path: inventory.dir.clone(),
             message: format!(
                 "targeted discovery found plugin id '{}' but every matching artifact failed verification: {}",
                 plugin_id,
@@ -186,9 +240,9 @@ pub(super) fn scan_plugin_id(
     let engine_total = items.len().saturating_sub(bootstrap_total);
 
     Ok(DiscoveryGraph {
-        dir: dir.to_path_buf(),
-        entries_total,
-        skipped_non_dynlib,
+        dir: inventory.dir.clone(),
+        entries_total: inventory.entries_total,
+        skipped_non_dynlib: inventory.skipped_non_dynlib,
         items,
         scan_errors,
         platform_runtime_count: 0,

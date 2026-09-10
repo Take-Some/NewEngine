@@ -6,7 +6,7 @@ use newengine_plugin_api::HostApiV1;
 
 use super::graph::{DiscoveryGraph, LoadPhaseFilter};
 use super::logging::{emit_discovery_logs, emit_selection_table};
-use super::scan::{scan_plugin_id, scan_plugins_dir};
+use super::scan::{scan_plugin_id_from_inventory, scan_plugins_dir, scan_targeted_inventory};
 use super::selection::{build_frozen_composition_plan, build_load_selection};
 use crate::manager::types::{PluginLoadError, PluginLoadOrigin};
 use crate::paths::{default_plugins_dir, resolve_plugins_dir};

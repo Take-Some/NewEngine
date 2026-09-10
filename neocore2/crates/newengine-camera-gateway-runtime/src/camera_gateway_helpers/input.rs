@@ -46,6 +46,71 @@ fn aabb_distance_sq_to_point(min: Vec3, max: Vec3, point: Vec3) -> f32 {
     (point - nearest).length_squared()
 }
 
+/// Camera collision uses the same ECS-change contract as the physics bridge: static authored
+/// meshes are structural data and must not be rescanned on every render frame. The cache keeps
+/// a slightly wider gather ring than the historical 32 m relevance radius, so the player can move
+/// several metres without missing a collider before the next spatial refresh.
+#[derive(Clone, Debug)]
+struct CameraSpringArmStaticCollisionCache {
+    observed_tick: u64,
+    center_ws: Vec3,
+    initialized: bool,
+    rebuild_count: u64,
+    meshes: Vec<CameraSpringArmMeshCollider>,
+}
+
+impl Default for CameraSpringArmStaticCollisionCache {
+    fn default() -> Self {
+        Self {
+            observed_tick: 0,
+            center_ws: Vec3::ZERO,
+            initialized: false,
+            rebuild_count: 0,
+            meshes: Vec::new(),
+        }
+    }
+}
+
+#[inline]
+fn static_camera_collision_cache_dirty(
+    world: &World,
+    cache: &CameraSpringArmStaticCollisionCache,
+    center: Vec3,
+) -> bool {
+    if !cache.initialized || cache.observed_tick == 0 {
+        return true;
+    }
+
+    // The cached gather ring is 8 m wider than the normal relevance radius. Rescan once the
+    // player has consumed that margin so every collider that can enter the old 32 m set was
+    // already present in the cached 40 m set.
+    const STATIC_RESCAN_DISTANCE: f32 = 8.0;
+    if (center - cache.center_ws).length_squared()
+        >= STATIC_RESCAN_DISTANCE * STATIC_RESCAN_DISTANCE
+    {
+        return true;
+    }
+
+    let since_tick = cache.observed_tick;
+    if world.entities_changed_since(since_tick)
+        || world.any_changed_since::<newengine_gameplay_world_runtime::gameplay::StaticMeshCollider>(
+            since_tick,
+        )
+        || world.any_added_since::<newengine_gameplay_world_runtime::gameplay::StaticMeshCollider>(
+            since_tick,
+        )
+    {
+        return true;
+    }
+
+    world.any_changed_since::<Transform>(since_tick)
+        && world.query_changed::<Transform>(since_tick).any(|(entity, _)| {
+            world
+                .get::<newengine_gameplay_world_runtime::gameplay::StaticMeshCollider>(entity)
+                .is_some()
+        })
+}
+
 /// Projects query-participating gameplay colliders into the camera-runtime neutral
 /// spring-arm collision world. This stays backend-neutral and works even when the
 /// physics service is between fixed ticks.
@@ -53,14 +118,23 @@ pub(super) fn refresh_camera_spring_arm_collision_world(world: &mut World, playe
     let center = newengine_transform::read_entity_world_pose_local_chain(world, player)
         .map(|pose| pose.0)
         .unwrap_or(Vec3::ZERO);
-    const RELEVANCE_RADIUS: f32 = 32.0;
-    let relevance_sq = RELEVANCE_RADIUS * RELEVANCE_RADIUS;
+    const DYNAMIC_RELEVANCE_RADIUS: f32 = 32.0;
+    const STATIC_GATHER_RADIUS: f32 = 40.0;
+    let dynamic_relevance_sq = DYNAMIC_RELEVANCE_RADIUS * DYNAMIC_RELEVANCE_RADIUS;
+    let static_gather_sq = STATIC_GATHER_RADIUS * STATIC_GATHER_RADIUS;
+
+    let current_tick = world.tick();
+    let mut static_cache = world
+        .remove_resource::<CameraSpringArmStaticCollisionCache>()
+        .unwrap_or_default();
+    let rebuild_static = static_camera_collision_cache_dirty(world, &static_cache, center);
 
     let mut collision_world = world
         .remove_resource::<CameraSpringArmCollisionWorld>()
         .unwrap_or_default();
     collision_world.clear();
 
+    // Dynamic/query bodies may move between fixed ticks, so keep this small set live every frame.
     for (entity, body) in
         world.query::<newengine_gameplay_world_runtime::gameplay::PhysicsBodyDesc>()
     {
@@ -76,7 +150,7 @@ pub(super) fn refresh_camera_spring_arm_collision_world(world: &mut World, playe
         let bounds = body.shape.local_aabb().transformed(world_from_local);
         if !bounds.min.is_finite()
             || !bounds.max.is_finite()
-            || aabb_distance_sq_to_point(bounds.min, bounds.max, center) > relevance_sq
+            || aabb_distance_sq_to_point(bounds.min, bounds.max, center) > dynamic_relevance_sq
         {
             continue;
         }
@@ -87,34 +161,49 @@ pub(super) fn refresh_camera_spring_arm_collision_world(world: &mut World, playe
         });
     }
 
-    for (entity, collider) in
-        world.query::<newengine_gameplay_world_runtime::gameplay::StaticMeshCollider>()
-    {
-        let Some((position, rotation)) =
-            newengine_transform::read_entity_world_pose_local_chain(world, entity)
-        else {
-            continue;
-        };
-        let world_from_local = Mat4::from_scale_rotation_translation(Vec3::ONE, rotation, position);
-        let bounds = collider.local_bounds.transformed(world_from_local);
-        if !bounds.min.is_finite()
-            || !bounds.max.is_finite()
-            || aabb_distance_sq_to_point(bounds.min, bounds.max, center) > relevance_sq
+    if rebuild_static {
+        static_cache.meshes.clear();
+        for (entity, collider) in
+            world.query::<newengine_gameplay_world_runtime::gameplay::StaticMeshCollider>()
         {
-            continue;
+            let Some((position, rotation)) =
+                newengine_transform::read_entity_world_pose_local_chain(world, entity)
+            else {
+                continue;
+            };
+            let world_from_local =
+                Mat4::from_scale_rotation_translation(Vec3::ONE, rotation, position);
+            let bounds = collider.local_bounds.transformed(world_from_local);
+            if !bounds.min.is_finite()
+                || !bounds.max.is_finite()
+                || aabb_distance_sq_to_point(bounds.min, bounds.max, center) > static_gather_sq
+            {
+                continue;
+            }
+            static_cache.meshes.push(CameraSpringArmMeshCollider {
+                entity,
+                revision: collider.revision,
+                position_ws: position,
+                rotation_ws: rotation.normalize_or_identity(),
+                min_ls: collider.local_bounds.min,
+                max_ls: collider.local_bounds.max,
+                vertices: Arc::clone(&collider.vertices),
+                triangles: Arc::clone(&collider.triangles),
+            });
         }
-        collision_world.push_mesh(CameraSpringArmMeshCollider {
-            entity,
-            revision: collider.revision,
-            position_ws: position,
-            rotation_ws: rotation.normalize_or_identity(),
-            min_ls: collider.local_bounds.min,
-            max_ls: collider.local_bounds.max,
-            vertices: Arc::clone(&collider.vertices),
-            triangles: Arc::clone(&collider.triangles),
-        });
+        static_cache.center_ws = center;
+        static_cache.initialized = true;
+        static_cache.rebuild_count = static_cache.rebuild_count.wrapping_add(1);
+    }
+    static_cache.observed_tick = current_tick;
+
+    // CameraSpringArmCollisionWorld keeps its mesh acceleration cache across clear(), so this is
+    // only cheap candidate publication on steady-state frames; BVHs rebuild only on revision change.
+    for collider in static_cache.meshes.iter().cloned() {
+        collision_world.push_mesh(collider);
     }
 
+    world.insert_resource(static_cache);
     world.insert_resource(collision_world);
 }
 

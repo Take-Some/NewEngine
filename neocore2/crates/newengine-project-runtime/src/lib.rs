@@ -53,6 +53,43 @@ impl ProjectRuntimeContext {
     }
 }
 
+/// Reconstruct the runtime-only registries from a launcher-authoritative resolved
+/// project payload without reopening `game.toml`. This is the in-process half of
+/// the runtime-profile launch handoff.
+pub fn project_context_from_resolved_payload(
+    payload: newengine_project_api::ResolvedProjectContextPayloadV1,
+) -> Result<ProjectRuntimeContext, String> {
+    if payload.schema_version
+        != newengine_project_api::RESOLVED_PROJECT_CONTEXT_PAYLOAD_SCHEMA_V1
+    {
+        return Err(format!(
+            "unsupported resolved project payload schema={} expected={}",
+            payload.schema_version,
+            newengine_project_api::RESOLVED_PROJECT_CONTEXT_PAYLOAD_SCHEMA_V1
+        ));
+    }
+    if let Err(errors) = payload.manifest.validate() {
+        return Err(format!(
+            "resolved project manifest invalid: {}",
+            errors.join("; ")
+        ));
+    }
+    let scripts = ProjectScriptRegistry::from_manifest(&payload.manifest.scripting)
+        .map_err(|error| format!("resolved project scripting invalid: {error}"))?;
+    let mut mounts = ContentMountRegistry::default();
+    for descriptor in &payload.manifest.content {
+        mounts.register(descriptor.clone().normalized(&payload.project_root))?;
+    }
+    Ok(ProjectRuntimeContext {
+        manifest_path: payload.manifest_path,
+        project_root: payload.project_root,
+        manifest: payload.manifest,
+        launch: payload.launch,
+        mounts,
+        scripts,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeCompositionContext {
     pub manifest_path: PathBuf,
@@ -346,6 +383,30 @@ mod project_request_resolution_tests {
         assert_eq!(
             path_request_from_args(&args, &["--project"]),
             Some(PathBuf::from("projects/sample"))
+        );
+    }
+
+    #[test]
+    fn resolved_payload_reconstructs_project_without_manifest_io() {
+        let manifest = ProjectManifest {
+            id: "resolved-only".to_owned(),
+            name: "Resolved Only".to_owned(),
+            runtime_profile: Some("newengine.runtime-profile.game-ready".to_owned()),
+            ..ProjectManifest::default()
+        };
+        let launch = manifest.resolve_launch(Some("game")).unwrap();
+        let payload = newengine_project_api::ResolvedProjectContextPayloadV1::new(
+            PathBuf::from("Z:/definitely-not-present/game.toml"),
+            PathBuf::from("Z:/definitely-not-present"),
+            manifest,
+            launch,
+        );
+        let context = project_context_from_resolved_payload(payload).unwrap();
+        assert_eq!(context.manifest.id, "resolved-only");
+        assert_eq!(context.launch.preset_id, "game");
+        assert_eq!(
+            context.manifest_path,
+            PathBuf::from("Z:/definitely-not-present/game.toml")
         );
     }
 }

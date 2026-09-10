@@ -597,12 +597,19 @@ fn launch_runtime_profile_via_plugins(
         }
         append_env_list_unique("NEWENGINE_PLUGIN_EXCLUDE_IDS", runtime_profile);
 
+        let resolved_project = newengine_project_api::ResolvedProjectContextPayloadV1::new(
+            project.manifest_path.clone(),
+            project.project_root.clone(),
+            project.manifest.clone(),
+            project.launch.clone(),
+        );
         let payload = serde_json::to_vec(&serde_json::json!({
             "manifest_path": project.manifest_path.to_string_lossy(),
             "game_manifest_path": project.manifest_path.to_string_lossy(),
             "launch_id": project.launch.preset_id,
             "runtime_profile": runtime_profile,
             "game_module": project.manifest.game_module,
+            "resolved_project": resolved_project,
         }))
         .map_err(|error| format!("encode runtime-profile launch request: {error}"))?;
 

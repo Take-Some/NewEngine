@@ -280,7 +280,7 @@ impl StartupGraphicsSettings {
         self.bloom_knee = self.bloom_knee.clamp(0.0, 5.0);
         self.bloom_intensity = self.bloom_intensity.clamp(0.0, 5.0);
         self.bloom_radius = self.bloom_radius.clamp(0.1, 5.0);
-        self.view_distance_meters = self.view_distance_meters.clamp(100.0, 2500.0);
+        self.view_distance_meters = self.view_distance_meters.clamp(100.0, 10_000.0);
         self.lod_distance_scale = self.lod_distance_scale.clamp(0.5, 2.0);
         self.shadow_max_distance = self.shadow_max_distance.clamp(4.0, 2048.0);
         self.shadow_softness = self.shadow_softness.clamp(0.0, 8.0);

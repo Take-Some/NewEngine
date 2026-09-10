@@ -117,6 +117,7 @@ impl FrameGraphBuilder {
                 StandardRenderPhase::LocalShadowMap => self.local_shadow_atlas(true),
                 StandardRenderPhase::TessellationPrepare => self.tessellation_prepare(),
                 StandardRenderPhase::DepthPrepass => self.depth_prepass(),
+                StandardRenderPhase::VisibilityCull => self.visibility_cull(),
                 StandardRenderPhase::ViewportGBuffer => self.gbuffer(),
                 StandardRenderPhase::DeferredLighting => self.deferred_lighting(),
                 StandardRenderPhase::ViewportForward => self.forward_opaque(),

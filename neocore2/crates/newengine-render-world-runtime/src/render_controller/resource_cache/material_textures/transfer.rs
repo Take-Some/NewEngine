@@ -30,7 +30,14 @@ impl RuntimeRenderController {
         let worker_path = path.clone();
         let result = Arc::new(Mutex::new(None));
         let result_out = Arc::clone(&result);
-        let request = material_texture_decode_request(&path, self.frame.frame_index);
+        let priority = self
+            .gpu
+            .material
+            .texture_priorities
+            .get(&path)
+            .copied()
+            .unwrap_or_else(MaterialTexturePriority::secondary);
+        let request = material_texture_decode_request(&path, self.frame.frame_index, priority);
         let host_context = newengine_plugin_host::current_host_context();
         let ticket = thread_pool.submit_request(request, move || {
             let decoded = newengine_plugin_host::with_host_context(&host_context, || {

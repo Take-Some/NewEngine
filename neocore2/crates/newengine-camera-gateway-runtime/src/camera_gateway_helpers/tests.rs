@@ -155,3 +155,97 @@ fn third_person_config_carries_interpolated_player_render_pose() {
     let configured_rotation = config.third_person_render_rotation_ws.unwrap();
     assert!(configured_rotation.dot(render_rotation).abs() > 0.999999);
 }
+
+#[test]
+fn static_camera_collision_candidates_are_reused_until_ecs_or_spatial_change() {
+    use newengine_gameplay_world_runtime::gameplay::StaticMeshCollider;
+    use newengine_transform::Transform;
+
+    let mut world = World::new();
+    let player = world.spawn();
+    let collider_entity = world.spawn();
+    let _ = world.insert(player, Transform::default());
+    let _ = world.insert(
+        collider_entity,
+        Transform {
+            position: Vec3::new(0.0, 0.0, 2.0),
+            ..Transform::default()
+        },
+    );
+    let _ = world.insert(
+        collider_entity,
+        StaticMeshCollider::new(
+            vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0, 1, 2]],
+        )
+        .expect("static camera collider"),
+    );
+
+    refresh_camera_spring_arm_collision_world(&mut world, player);
+    let first_rebuilds = world
+        .resource::<CameraSpringArmStaticCollisionCache>()
+        .expect("camera static collision cache")
+        .rebuild_count;
+    assert_eq!(first_rebuilds, 1);
+    assert_eq!(
+        world
+            .resource::<CameraSpringArmCollisionWorld>()
+            .expect("camera collision world")
+            .telemetry()
+            .mesh_count,
+        1
+    );
+
+    world.advance_tick();
+    refresh_camera_spring_arm_collision_world(&mut world, player);
+    let cache = world
+        .resource::<CameraSpringArmStaticCollisionCache>()
+        .expect("camera static collision cache");
+    assert_eq!(
+        cache.rebuild_count, first_rebuilds,
+        "unchanged static geometry must not trigger another O(N) candidate scan"
+    );
+    assert_eq!(cache.meshes.len(), 1);
+}
+
+#[test]
+fn static_camera_collision_cache_rebuilds_after_tracked_static_transform_change() {
+    use newengine_gameplay_world_runtime::gameplay::StaticMeshCollider;
+    use newengine_transform::Transform;
+
+    let mut world = World::new();
+    let player = world.spawn();
+    let collider_entity = world.spawn();
+    let _ = world.insert(player, Transform::default());
+    let _ = world.insert(collider_entity, Transform::default());
+    let _ = world.insert(
+        collider_entity,
+        StaticMeshCollider::new(
+            vec![[-1.0, -1.0, 2.0], [1.0, -1.0, 2.0], [0.0, 1.0, 2.0]],
+            vec![[0, 1, 2]],
+        )
+        .expect("static camera collider"),
+    );
+
+    refresh_camera_spring_arm_collision_world(&mut world, player);
+    world.advance_tick();
+    world
+        .get_mut_tracked::<Transform>(collider_entity)
+        .expect("static collider transform")
+        .position = Vec3::new(100.0, 0.0, 0.0);
+    refresh_camera_spring_arm_collision_world(&mut world, player);
+
+    let cache = world
+        .resource::<CameraSpringArmStaticCollisionCache>()
+        .expect("camera static collision cache");
+    assert_eq!(cache.rebuild_count, 2);
+    assert!(cache.meshes.is_empty());
+    assert_eq!(
+        world
+            .resource::<CameraSpringArmCollisionWorld>()
+            .expect("camera collision world")
+            .telemetry()
+            .mesh_count,
+        0
+    );
+}

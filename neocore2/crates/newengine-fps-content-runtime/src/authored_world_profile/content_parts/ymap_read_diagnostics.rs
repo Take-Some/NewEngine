@@ -97,10 +97,17 @@ pub(super) fn log_loaded_profile_summary(
 
 fn log_surface_layer_details(logical_path: &str, profile: &AuthoredWorldProfile) {
     if profile.terrain.surface.layers.is_empty() {
-        newengine_ulog_api::ulog::warn!(
-            "authored-world ymap read: terrain surface package path='{}' status='fallback_single_material' reason='no declarative <surface><layers> entries found'",
-            logical_path,
-        );
+        if profile.terrain.enabled {
+            newengine_ulog_api::ulog::warn!(
+                "authored-world ymap read: terrain surface package path='{}' status='fallback_single_material' reason='no declarative <surface><layers> entries found'",
+                logical_path,
+            );
+        } else {
+            newengine_ulog_api::ulog::info!(
+                "authored-world ymap read: terrain surface package path='{}' status='not_applicable' reason='procedural terrain disabled by authored profile'",
+                logical_path,
+            );
+        }
         return;
     }
 

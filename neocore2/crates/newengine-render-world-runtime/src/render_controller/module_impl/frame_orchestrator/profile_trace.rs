@@ -4,10 +4,15 @@ impl RenderFrameOrchestrator {
     pub(in super::super) fn trace_feature_extract_profile(
         frame_index: u64,
         trace_frame: bool,
-        feature_ms: f32,
-        breakdown: &str,
+        features: &FeatureExtractionFrame,
         ui_layers: &UiLayerDrawPacketSet,
+        thread_pool: Option<&ThreadPoolHandle>,
     ) {
+        let feature_ms = features.profile_total_ms();
+        if !timed_profile_due(frame_index, trace_frame, feature_ms) {
+            return;
+        }
+        let breakdown = features.profile_breakdown();
         let ui_stats = if ui_layers.is_empty() {
             "ui_layers=none".to_owned()
         } else {
@@ -25,7 +30,8 @@ impl RenderFrameOrchestrator {
                 .join(" | ");
             format!("ui_layers(count={} {})", ui_layers.packets.len(), domains)
         };
-        emit_timed_profile(
+        emit_timed_profile_deferred(
+            thread_pool,
             "render feature profile",
             frame_index,
             trace_frame,
@@ -96,14 +102,20 @@ impl RenderFrameOrchestrator {
         frame_index: u64,
         trace_frame: bool,
         profile: &FrameCpuProfile,
+        thread_pool: Option<&ThreadPoolHandle>,
     ) {
-        emit_timed_profile(
+        let total_ms = profile.total_ms();
+        if !timed_profile_due(frame_index, trace_frame, total_ms) {
+            return;
+        }
+        emit_timed_profile_deferred(
+            thread_pool,
             "render cpu profile",
             frame_index,
             trace_frame,
-            profile.total_ms(),
+            total_ms,
             profile.breakdown(),
-            "",
+            String::new(),
         );
     }
 }

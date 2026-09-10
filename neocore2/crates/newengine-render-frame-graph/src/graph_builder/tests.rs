@@ -94,6 +94,13 @@ fn deferred_runtime_routes_opaque_geometry_into_gbuffer() {
         "deferred draw-list routes must validate: {:?}",
         report.errors
     );
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|issue| issue.code == "draw_list.multiple_routes"),
+        "GBuffer + ForwardOpaque is an intentional phase-partitioned OpaqueForward route in deferred mode"
+    );
 }
 
 #[test]

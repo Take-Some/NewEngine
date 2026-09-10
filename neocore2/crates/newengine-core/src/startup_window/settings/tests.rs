@@ -53,7 +53,7 @@ mod tests {
         settings.graphics.shadow_cascade_count = 99;
         settings.graphics.shadow_map_resolution = 3000;
         settings.normalize();
-        assert_eq!(settings.graphics.view_distance_meters, 2500.0);
+        assert_eq!(settings.graphics.view_distance_meters, 10_000.0);
         assert_eq!(settings.graphics.lod_distance_scale, 2.0);
         assert_eq!(settings.graphics.shadow_cascade_count, 4);
         assert_eq!(settings.graphics.shadow_map_resolution, 4096);

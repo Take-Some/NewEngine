@@ -35,6 +35,7 @@ pub struct Storage<T: Component> {
     pub(crate) changed_tick: NeSecondaryMap<EntityId, u64>,
     pub(crate) max_added_tick: u64,
     pub(crate) max_changed_tick: u64,
+    pub(crate) membership_revision: u64,
 }
 
 impl<T: Component> Storage<T> {
@@ -46,6 +47,7 @@ impl<T: Component> Storage<T> {
             changed_tick: SecondaryMap::new(),
             max_added_tick: 0,
             max_changed_tick: 0,
+            membership_revision: 0,
         }
     }
 
@@ -89,7 +91,9 @@ impl<T: Component> Storage<T> {
 
     #[inline]
     pub fn remove_all_traces(&mut self, id: EntityId) {
-        let _ = self.map.remove(id);
+        if self.map.remove(id).is_some() {
+            self.membership_revision = self.membership_revision.saturating_add(1).max(1);
+        }
         let _ = self.added_tick.remove(id);
         let _ = self.changed_tick.remove(id);
     }

@@ -126,3 +126,63 @@ impl DrawIndexedArgs {
         }
     }
 }
+
+
+/// Backend-neutral indexed indirect draw descriptor.
+///
+/// The command buffer contains tightly/strided packed native-compatible indexed draw records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrawIndexedIndirectArgs {
+    pub buffer: BufferId,
+    pub offset: u64,
+    pub draw_count: u32,
+    pub stride: u32,
+}
+
+impl DrawIndexedIndirectArgs {
+    pub const COMMAND_SIZE: u32 = 20;
+
+    #[inline]
+    pub const fn new(buffer: BufferId, offset: u64, draw_count: u32) -> Self {
+        Self {
+            buffer,
+            offset,
+            draw_count,
+            stride: Self::COMMAND_SIZE,
+        }
+    }
+}
+
+/// Backend-neutral indexed indirect-count descriptor. The GPU may write both the command stream
+/// and the final visible draw count, allowing visibility compaction without a CPU readback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrawIndexedIndirectCountArgs {
+    pub buffer: BufferId,
+    pub offset: u64,
+    pub count_buffer: BufferId,
+    pub count_offset: u64,
+    pub max_draw_count: u32,
+    pub stride: u32,
+}
+
+impl DrawIndexedIndirectCountArgs {
+    pub const COMMAND_SIZE: u32 = DrawIndexedIndirectArgs::COMMAND_SIZE;
+
+    #[inline]
+    pub const fn new(
+        buffer: BufferId,
+        offset: u64,
+        count_buffer: BufferId,
+        count_offset: u64,
+        max_draw_count: u32,
+    ) -> Self {
+        Self {
+            buffer,
+            offset,
+            count_buffer,
+            count_offset,
+            max_draw_count,
+            stride: Self::COMMAND_SIZE,
+        }
+    }
+}

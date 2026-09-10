@@ -196,6 +196,12 @@ pub enum RenderFeature {
     PostScan,
     OcclusionCulling,
     HiZOcclusion,
+    /// Backend can consume GPU-authored indirect indexed draw command buffers.
+    IndirectDraws,
+    /// Backend can execute more than one command from one indirect draw call.
+    MultiDrawIndirect,
+    /// Backend can consume a GPU-authored draw-count buffer without CPU readback.
+    IndirectDrawCount,
     PvsVisibility,
     ZoneCulling,
     Reflections,

@@ -8,6 +8,15 @@ use newengine_model_runtime::ydd_runtime::decode_runtime_ydd_prefabs;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+#[inline]
+fn static_world_decode_priority(launch_critical: bool) -> TaskPriority {
+    if launch_critical {
+        TaskPriority::Critical
+    } else {
+        TaskPriority::Interactive
+    }
+}
+
 fn static_world_decode_concurrency(_thread_pool: &ThreadPoolHandle) -> usize {
     // A decoded YDD can be tens of MiB before ECS/GPU admission. Running several
     // dictionary decodes in parallel makes peak commit scale with job count and can
@@ -20,8 +29,7 @@ fn static_world_decode_ready_source_limit() -> usize {
     // Backpressure is based on decoded source packets, not only active worker jobs.
     // Without this bound decode can outrun bounded ECS admission and retain hundreds
     // of fully expanded mesh packets at once on dense authored maps.
-    newengine_runtime_env::var_u32("NEWENGINE_STATIC_WORLD_DECODE_READY_SOURCES", 1, 1, 32)
-        as usize
+    newengine_runtime_env::var_u32("NEWENGINE_STATIC_WORLD_DECODE_READY_SOURCES", 1, 1, 32) as usize
 }
 
 #[inline]
@@ -84,6 +92,7 @@ fn requeue_dictionary_if_needed(state: &mut AuthoredStaticWorldStreamingState, d
 pub(super) fn submit_static_world_decode_jobs(
     state: &mut AuthoredStaticWorldStreamingState,
     thread_pool: &ThreadPoolHandle,
+    launch_critical: bool,
 ) {
     let max_jobs = static_world_decode_concurrency(thread_pool);
     let ready_source_limit = static_world_decode_ready_source_limit();
@@ -124,7 +133,7 @@ pub(super) fn submit_static_world_decode_jobs(
             .with_owner("engine.scene")
             .with_category("asset-decode")
             .with_lane(TaskLane::AssetIo)
-            .with_priority(TaskPriority::Interactive)
+            .with_priority(static_world_decode_priority(launch_critical))
             .with_task_id(format!(
                 "scene.static-world.dictionary.decode.{:016x}",
                 newengine_primitives::fnv1a_64(&dictionary)
@@ -263,4 +272,19 @@ pub(super) fn decode_one_static_world_dictionary_synchronously(
         }
     }
     requeue_dictionary_if_needed(state, &dictionary);
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::static_world_decode_priority;
+    use newengine_core::TaskPriority;
+
+    #[test]
+    fn launch_decode_priority_bypasses_frame_budget_starvation() {
+        assert_eq!(static_world_decode_priority(true), TaskPriority::Critical);
+        assert_eq!(
+            static_world_decode_priority(false),
+            TaskPriority::Interactive
+        );
+    }
 }

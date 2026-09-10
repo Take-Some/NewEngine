@@ -444,8 +444,64 @@ fn apply_native_rifle_bilateral_weapon_constraint(
 /// only a compatibility fallback for equipment without an authored hand-contact pose. IK is terminal
 /// contact stabilization for recoil/obstruction/secondary motion and must be an identity solve at the
 /// canonical authored pose. Reload may release constraints.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn apply_equipped_weapon_support_ik(
+    presentation: &newengine_engine_runtime::gameplay::WeaponPresentationDefinition,
+    rig: Option<&WeaponArmIkRig>,
+    skeleton: &ModelSkeletonMetadata,
+    animation_runtime: &AnimationSkeletonRuntime,
+    pose: &mut [JointLocalPose],
+    frames: &mut Vec<Mat4>,
+    view_forward_model: Option<Vec3>,
+    view_rotation_model: Option<Quat>,
+    first_person_eye_model: Option<Vec3>,
+    first_person_active: bool,
+    aim_alpha: f32,
+    recoil_alpha: f32,
+    recoil_yaw_radians: f32,
+    obstruction_alpha: f32,
+    secondary_rotation_offset_local: Vec3,
+    authored_hand_contacts: bool,
+    authored_prop_socket_authority: bool,
+    strict_native_rifle_contact_contract: bool,
+    authored_transition_weapon_root: Option<crate::weapon_grip::WeaponRootTransform>,
+    support_right_hand: bool,
+    support_left_hand: bool,
+    aim_controller: Option<&mut WeaponAimControllerState>,
+) -> Result<Option<WeaponIkSolveResult>, String> {
+    if rig.is_none() {
+        return Ok(None);
+    }
+    rebuild_model_joint_frames(animation_runtime, pose, frames)?;
+    apply_equipped_weapon_support_ik_from_current_frames(
+        presentation,
+        rig,
+        skeleton,
+        animation_runtime,
+        pose,
+        frames,
+        view_forward_model,
+        view_rotation_model,
+        first_person_eye_model,
+        first_person_active,
+        aim_alpha,
+        recoil_alpha,
+        recoil_yaw_radians,
+        obstruction_alpha,
+        secondary_rotation_offset_local,
+        authored_hand_contacts,
+        authored_prop_socket_authority,
+        strict_native_rifle_contact_contract,
+        authored_transition_weapon_root,
+        support_right_hand,
+        support_left_hand,
+        aim_controller,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_equipped_weapon_support_ik_from_current_frames(
     presentation: &newengine_engine_runtime::gameplay::WeaponPresentationDefinition,
     rig: Option<&WeaponArmIkRig>,
     skeleton: &ModelSkeletonMetadata,
@@ -472,7 +528,6 @@ fn apply_equipped_weapon_support_ik(
     let Some(rig) = rig else {
         return Ok(None);
     };
-    rebuild_model_joint_frames(animation_runtime, pose, frames)?;
     let chest = *frames
         .get(rig.chest)
         .ok_or("weapon ReadyHold chest frame is unavailable")?;

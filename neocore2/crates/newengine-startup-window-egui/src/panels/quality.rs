@@ -115,7 +115,7 @@ impl PreStartGraphicsApp {
                         ui.add(
                             egui::Slider::new(
                                 &mut self.settings.graphics.view_distance_meters,
-                                100.0..=2500.0,
+                                100.0..=10_000.0,
                             )
                             .step_by(50.0)
                             .suffix(" m"),

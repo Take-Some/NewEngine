@@ -353,7 +353,7 @@ fn finalize_player_pose_and_palette(
                     }
                 }
             } else {
-                match apply_equipped_weapon_support_ik(
+                match apply_equipped_weapon_support_ik_from_current_frames(
                     presentation,
                     Some(rig),
                     &binding.skeleton,

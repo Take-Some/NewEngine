@@ -143,6 +143,10 @@ impl RenderFrameRecipe {
         steps.push(RenderPhaseRecipeStep::enabled(
             StandardRenderPhase::ParticleSimulation,
         ));
+        // GPU-driven visibility is not part of the unconditional production recipe yet.
+        // It must be injected only after backend capability negotiation and synchronized
+        // deployment of the matching renderer provider; otherwise an older installed backend
+        // can reject the new phase and leave only the frame clear visible.
         if features.deferred {
             // Native GBuffer writes the authoritative scene depth together with the MRTs.
             // A separate depth prepass would create a second depth resource/domain and is
@@ -282,6 +286,19 @@ mod tests {
             particle_composite + 1,
             "transparent continues after the LOAD-preserving particle composite"
         );
+    }
+
+    #[test]
+    fn standard_runtime_does_not_enable_visibility_cull_without_backend_gate() {
+        let recipe = RenderFrameRecipe::standard_runtime(RuntimeFrameFeatureSet::deferred(
+            true, false, false, false,
+        ));
+        let phases = recipe.enabled_phases().collect::<Vec<_>>();
+        assert!(
+            !phases.contains(&StandardRenderPhase::VisibilityCull),
+            "visibility cull must remain opt-in until the negotiated backend data-plane is deployed"
+        );
+        assert!(phases.contains(&StandardRenderPhase::ViewportGBuffer));
     }
 
     #[test]

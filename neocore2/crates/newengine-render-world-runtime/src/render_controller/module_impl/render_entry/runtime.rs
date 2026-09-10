@@ -2,6 +2,31 @@ use std::time::Instant;
 
 use super::*;
 
+fn trace_backend_phase_graph_dump(frame_index: u64, trace_frame: bool) {
+    if !trace_frame || frame_index <= 3 {
+        return;
+    }
+
+    let response = newengine_plugin_host::call_service_v1(
+        newengine_plugin_api::CapabilityId::from(newengine_render_api::ENGINE_RENDER_SERVICE_ID),
+        newengine_plugin_api::MethodName::from(
+            newengine_render_api::RENDER_SERVICE_METHOD_DUMP_PHASE_GRAPH_V1,
+        ),
+        newengine_plugin_api::Blob::from(Vec::new()),
+    );
+    let abi_stable::std_types::RResult::ROk(blob) = response else {
+        return;
+    };
+    let Ok(json) = std::str::from_utf8(blob.as_slice()) else {
+        return;
+    };
+    newengine_ulog_api::ulog::info!(
+        "render backend phase graph dump: frame={} json={}",
+        frame_index,
+        json
+    );
+}
+
 impl RuntimeRenderController {
     pub(in crate::render_controller::module_impl) fn render_runtime_module<E: Send + 'static>(
         &mut self,
@@ -445,7 +470,7 @@ impl RuntimeRenderController {
             && render_timing.frame_index.is_multiple_of(60)
         {
             newengine_ulog_api::ulog::info!(
-                "render phase profile: frame={} total_ms={:.3} pre_begin_ms={:.3} backend_begin_ms={:.3} playable_ms={:.3} diagnostics_ms={:.3} backend_end_ms={:.3} vk_begin_ms={:.3} slot_wait_ms={:.3} acquire_ms={:.3} image_wait_ms={:.3} vk_end_ms={:.3}",
+                "render phase profile: frame={} total_ms={:.3} pre_begin_ms={:.3} backend_begin_ms={:.3} playable_ms={:.3} diagnostics_ms={:.3} backend_end_ms={:.3} vk_begin_ms={:.3} slot_wait_ms={:.3} acquire_ms={:.3} image_wait_ms={:.3} vk_end_ms={:.3} gpu_ts={} gpu_frame={} gpu_shadow_ms={:.3} gpu_opaque_ms={:.3} gpu_postfx_ms={:.3} gpu_ui_ms={:.3} gpu_profiled_ms={:.3}",
                 render_timing.frame_index,
                 render_timing.total_ms,
                 render_timing.pre_begin_ms,
@@ -458,8 +483,16 @@ impl RuntimeRenderController {
                 render_timing.backend_surface_acquire_ms,
                 render_timing.backend_image_wait_ms,
                 render_timing.backend_reported_end_ms,
+                render_timing.backend_gpu_timestamps_enabled,
+                render_timing.backend_gpu_timing_frame_index,
+                render_timing.backend_gpu_shadow_ms,
+                render_timing.backend_gpu_opaque_ms,
+                render_timing.backend_gpu_postfx_ms,
+                render_timing.backend_gpu_ui_ms,
+                render_timing.backend_gpu_profiled_ms,
             );
         }
+        trace_backend_phase_graph_dump(render_timing.frame_index, trace_frame);
         ctx.resources_mut().insert(render_timing);
         Ok(())
     }

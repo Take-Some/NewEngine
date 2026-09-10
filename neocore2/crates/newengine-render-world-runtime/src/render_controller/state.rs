@@ -572,6 +572,73 @@ impl RenderGpuSceneState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct VisibilityHistoryEntry {
+    pub(super) consecutive_occluded: u8,
+    pub(super) confirmed_occluded: bool,
+    pub(super) confidence: f32,
+    pub(super) last_produced_frame: u64,
+    pub(super) last_motion_frame: u64,
+    pub(super) last_seen_frame: u64,
+    pub(super) last_center: [f32; 3],
+    pub(super) last_radius: f32,
+    pub(super) initialized_bounds: bool,
+}
+
+impl Default for VisibilityHistoryEntry {
+    fn default() -> Self {
+        Self {
+            consecutive_occluded: 0,
+            confirmed_occluded: false,
+            confidence: 0.0,
+            last_produced_frame: 0,
+            last_motion_frame: 0,
+            last_seen_frame: 0,
+            last_center: [0.0; 3],
+            last_radius: 0.0,
+            initialized_bounds: false,
+        }
+    }
+}
+
+pub(super) struct RenderVisibilityRuntimeState {
+    pub(super) history: FxHashMap<u64, VisibilityHistoryEntry>,
+    pub(super) scene_key: Option<usize>,
+    pub(super) last_camera_position: Option<[f32; 3]>,
+    pub(super) last_camera_forward: Option<[f32; 3]>,
+    pub(super) last_viewport_extent: Option<[u32; 2]>,
+    pub(super) last_submission_frame: u64,
+    pub(super) last_provider_frame: u64,
+    pub(super) last_candidate_count: usize,
+    pub(super) last_result_count: usize,
+    pub(super) service_failures: u64,
+}
+
+impl RenderVisibilityRuntimeState {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            history: FxHashMap::default(),
+            scene_key: None,
+            last_camera_position: None,
+            last_camera_forward: None,
+            last_viewport_extent: None,
+            last_submission_frame: 0,
+            last_provider_frame: 0,
+            last_candidate_count: 0,
+            last_result_count: 0,
+            service_failures: 0,
+        }
+    }
+
+    #[inline]
+    pub(super) fn clear_history(&mut self) {
+        self.history.clear();
+        self.last_provider_frame = 0;
+        self.last_result_count = 0;
+    }
+}
+
 /// Frame/gameplay view state required by extraction. Renderer backend adapters
 /// must not access this directly; it is consumed before RenderFrameEnvelope is
 /// submitted.
@@ -587,6 +654,8 @@ pub(super) struct RenderFrameRuntimeState {
     /// This is a pure DTO snapshot from the camera contract boundary. Render
     /// runtime must not own `newengine-camera` projection/controller/nav state.
     pub(super) last_camera_snapshot: Option<CameraFrameSnapshot>,
+    /// Delayed engine.visibility control-plane history and hysteresis state.
+    pub(super) visibility: RenderVisibilityRuntimeState,
     /// Frame-coherent primitive extraction reused by shadow, GBuffer and forward passes.
     pub(super) primitive_scene_snapshot:
         Option<Arc<super::module_impl::frame_snapshots::PrimitiveSceneSnapshot>>,
@@ -619,6 +688,7 @@ impl RenderFrameRuntimeState {
             pending_pick_selection: None,
             pending_pick_additive: false,
             last_camera_snapshot: None,
+            visibility: RenderVisibilityRuntimeState::new(),
             primitive_scene_snapshot: None,
             skinned_shadow_scene_snapshot: None,
             prepared_skinned_shadow_plan: None,

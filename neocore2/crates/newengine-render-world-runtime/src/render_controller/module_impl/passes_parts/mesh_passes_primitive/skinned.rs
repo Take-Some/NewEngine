@@ -1,3 +1,4 @@
+use super::plan::primitive_role_cull_reason;
 use super::*;
 use crate::render_controller::module_impl::passes::mesh_visibility::sphere_screen_coverage_hint;
 
@@ -16,6 +17,7 @@ pub(crate) fn draw_skinned_player_primitives(
     runtime: bool,
     camera_position: Vec3,
     _camera_forward: Vec3,
+    deferred: bool,
 ) -> newengine_core::EngineResult<()> {
     use crate::render_controller::gpu::{ensure_player_skin_gpu, ensure_skin_palette_gpu};
 
@@ -132,6 +134,23 @@ pub(crate) fn draw_skinned_player_primitives(
             .copied();
         let resolved = material_ref.and_then(|reference| mats.resolve(reference.id));
         let material_plan = LitMaterialPlan::from_resolved(resolved.as_ref(), prim.color);
+        let render_options = world
+            .get::<MeshRenderOptions>(entity)
+            .cloned()
+            .unwrap_or_else(MeshRenderOptions::character_body);
+        let forward_alpha_surface = matches!(pass, SceneMeshPass::Forward)
+            && (material_plan.alpha_blend || material_plan.alpha_cutoff > 0.0);
+        if !forward_alpha_surface
+            && primitive_role_cull_reason(
+                &render_options,
+                pass,
+                this.runtime_profile().draw_sky_visuals(),
+                deferred,
+            )
+            .is_some()
+        {
+            continue;
+        }
         let player_visual =
             world.get::<newengine_gameplay_world_runtime::gameplay::PlayerVisualPart>(entity);
         let equipped_weapon = player_visual.is_some_and(|part| {
@@ -153,9 +172,10 @@ pub(crate) fn draw_skinned_player_primitives(
         {
             continue;
         }
-        // Transparent skinned overlays are forward-only. Writing tearline/wet layers into
-        // the deferred GBuffer makes their mostly-transparent cards become opaque depth/color.
-        if pass.is_gbuffer() && material_plan.alpha_blend {
+        // Deferred GBuffer is opaque-only. Transparent overlays and authored
+        // alpha-cutout surfaces stay in forward, which already consumes the exact
+        // material cutoff instead of guessing from texture alpha.
+        if pass.is_gbuffer() && (material_plan.alpha_blend || material_plan.alpha_cutoff > 0.0) {
             continue;
         }
         let base_texture = if let Some(path) = material_plan.base_color_texture {
@@ -203,12 +223,11 @@ pub(crate) fn draw_skinned_player_primitives(
             }
             SceneMeshPass::GBuffer => lit.gbuffer_skinned_pipeline,
         };
-        let receive_shadow_texture =
-            if matches!(pass, SceneMeshPass::Forward) && material_plan.receive_shadows {
-                shadow_texture
-            } else {
-                lit.white_texture
-            };
+        let receive_shadow_texture = if material_plan.receive_shadows {
+            shadow_texture
+        } else {
+            lit.white_texture
+        };
         let receive_local_shadow_texture =
             if matches!(pass, SceneMeshPass::Forward) && material_plan.receive_shadows {
                 local_shadow_texture

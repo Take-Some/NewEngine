@@ -29,6 +29,8 @@ pub struct PluginManager {
     loaded: Vec<LoadedPlugin>,
     loaded_ids: NeHashSet<String>,
     discovery_cache: Option<discovery::DiscoveryGraph>,
+    composition_discovery_cache: NeHashMap<std::path::PathBuf, discovery::DiscoveryGraph>,
+    targeted_discovery_cache: Option<discovery::TargetedDiscoveryInventory>,
     frozen_composition_plan: Option<discovery::FrozenPluginCompositionPlan>,
     incremental_load: Option<discovery::IncrementalLoadState>,
 }
@@ -46,6 +48,8 @@ impl PluginManager {
             loaded: Vec::new(),
             loaded_ids: NeHashSet::default(),
             discovery_cache: None,
+            composition_discovery_cache: NeHashMap::default(),
+            targeted_discovery_cache: None,
             frozen_composition_plan: None,
             incremental_load: None,
         }

@@ -8,6 +8,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod binary;
+pub use binary::{
+    decode_visibility_query_batch_bin, decode_visibility_result_batch_bin,
+    encode_visibility_query_batch_bin, encode_visibility_result_batch_bin,
+};
+
 pub const ENGINE_VISIBILITY_SERVICE_ID: &str = "engine.visibility";
 pub const VISIBILITY_SERVICE_ID: &str = "visibility.api";
 pub const VISIBILITY_BACKEND_CAPABILITY_ID: &str = "visibility.backend";
@@ -18,6 +24,7 @@ pub mod visibility_method {
     pub const INVOKE_JSON: &str = newengine_service_api::SERVICE_METHOD_INVOKE_JSON;
     pub const SHUTDOWN_V1: &str = newengine_service_api::SERVICE_METHOD_SHUTDOWN_V1;
     pub const QUERY_BATCH_JSON_V1: &str = "visibility.query_batch_json_v1";
+    pub const QUERY_BATCH_BIN_V1: &str = "visibility.query_batch_bin_v1";
 }
 
 pub const VISIBILITY_SERVICE_METHODS: &[&str] = &[
@@ -25,6 +32,7 @@ pub const VISIBILITY_SERVICE_METHODS: &[&str] = &[
     visibility_method::INVOKE_JSON,
     visibility_method::SHUTDOWN_V1,
     visibility_method::QUERY_BATCH_JSON_V1,
+    visibility_method::QUERY_BATCH_BIN_V1,
 ];
 
 pub const VISIBILITY_BACKEND_SERVICE_SPEC: newengine_service_api::BackendServiceSpec =

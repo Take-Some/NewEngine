@@ -420,8 +420,11 @@ pub fn tick_authored_static_world_prefabs(
     let Some(mut state) = world.remove_resource::<AuthoredStaticWorldStreamingState>() else {
         return;
     };
+    let launch_critical = world
+        .resource::<WorldActivationState>()
+        .is_some_and(WorldActivationState::needs_prelaunch_gate);
     if let Some(thread_pool) = thread_pool {
-        decode::submit_static_world_decode_jobs(&mut state, thread_pool);
+        decode::submit_static_world_decode_jobs(&mut state, thread_pool, launch_critical);
         decode::poll_static_world_decode_jobs(&mut state);
     } else {
         decode::decode_one_static_world_dictionary_synchronously(&mut state);

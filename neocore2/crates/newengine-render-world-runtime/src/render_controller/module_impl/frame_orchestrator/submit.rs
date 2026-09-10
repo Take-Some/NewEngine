@@ -95,6 +95,15 @@ impl RenderFrameOrchestrator {
             Some(1.0),
         );
         let bounds = snapshot.bounds;
+        let runtime = view_frame.effective_play_mode.is_runtime();
+        controller.update_world_visibility_control(
+            scene,
+            runtime,
+            view.position_ws,
+            view.forward_ws,
+            Extent2D::new(scope.vp_w, scope.vp_h),
+        );
+        cpu_profile.mark("visibility_control");
         let runtime_profile = controller.runtime_profile().clone();
         let external_preview_target = controller.external_preview_target_active();
         let editor_active = controller.editor_viewport.is_active();
@@ -241,26 +250,30 @@ impl RenderFrameOrchestrator {
             deferred: deferred_enabled,
             viewport_extent: snapshot.viewport_extent,
             surface_extent: snapshot.surface_extent,
-            runtime: view_frame.effective_play_mode.is_runtime(),
+            runtime,
             debug_overlays: editor_wireframe || editor_show_overlays,
         };
 
-        Self::publish_render_task_pass_event(
-            controller.frame.frame_index,
-            newengine_task_api::task_pass::FEATURE_EXTRACT,
-            newengine_task_api::EngineTaskPhase::Scheduled,
-            "RenderPrep pass scheduled",
-            Self::render_prep_executor_detail(thread_pool, "Feature extraction is the profiler hotspot. Provider-safe DTO building should move to engine.threading; RenderApi command recording stays on the render thread."),
-            Some(0.0),
-        );
-        Self::publish_render_task_pass_event(
-            controller.frame.frame_index,
-            newengine_task_api::task_pass::FEATURE_EXTRACT,
-            newengine_task_api::EngineTaskPhase::Running,
-            "RenderPrep pass running",
-            "Feature extraction is executing on the render-thread barrier because current providers still record RenderApi command lists. Treat this as the synchronous fallback path, not the target architecture.",
-            None,
-        );
+        let feature_task_events_due =
+            Self::should_publish_render_task_pass_event(controller.frame.frame_index);
+        if feature_task_events_due {
+            Self::publish_render_task_pass_event(
+                controller.frame.frame_index,
+                newengine_task_api::task_pass::FEATURE_EXTRACT,
+                newengine_task_api::EngineTaskPhase::Scheduled,
+                "RenderPrep pass scheduled",
+                Self::render_prep_executor_detail(thread_pool, "Feature extraction is the profiler hotspot. Provider-safe DTO building should move to engine.threading; RenderApi command recording stays on the render thread."),
+                Some(0.0),
+            );
+            Self::publish_render_task_pass_event(
+                controller.frame.frame_index,
+                newengine_task_api::task_pass::FEATURE_EXTRACT,
+                newengine_task_api::EngineTaskPhase::Running,
+                "RenderPrep pass running",
+                "Feature extraction is executing on the render-thread barrier because current providers still record RenderApi command lists. Treat this as the synchronous fallback path, not the target architecture.",
+                None,
+            );
+        }
         let features = match FeatureExtractionFrame::extract_runtime(
             controller,
             r,
@@ -283,22 +296,24 @@ impl RenderFrameOrchestrator {
         Self::trace_feature_extract_profile(
             controller.frame.frame_index,
             scope.trace_frame,
-            features.profile_total_ms(),
-            &features.profile_breakdown(),
+            &features,
             &ui_layers,
+            thread_pool,
         );
-        Self::publish_render_task_pass_event(
-            controller.frame.frame_index,
-            newengine_task_api::task_pass::FEATURE_EXTRACT,
-            newengine_task_api::EngineTaskPhase::Completed,
-            "RenderPrep pass completed",
-            format!(
-                "Feature extraction completed profile_ms={:.2} breakdown={}",
-                features.profile_total_ms(),
-                features.profile_breakdown()
-            ),
-            Some(1.0),
-        );
+        if feature_task_events_due {
+            Self::publish_render_task_pass_event(
+                controller.frame.frame_index,
+                newengine_task_api::task_pass::FEATURE_EXTRACT,
+                newengine_task_api::EngineTaskPhase::Completed,
+                "RenderPrep pass completed",
+                format!(
+                    "Feature extraction completed profile_ms={:.2} breakdown={}",
+                    features.profile_total_ms(),
+                    features.profile_breakdown()
+                ),
+                Some(1.0),
+            );
+        }
         cpu_profile.mark("feature_extract");
 
         let shadow_rt_for_graph = if render_shadow_map {
@@ -444,6 +459,7 @@ impl RenderFrameOrchestrator {
             controller.frame.frame_index,
             scope.trace_frame,
             &cpu_profile,
+            thread_pool,
         );
         Ok(finalize_successful_submit(
             controller,

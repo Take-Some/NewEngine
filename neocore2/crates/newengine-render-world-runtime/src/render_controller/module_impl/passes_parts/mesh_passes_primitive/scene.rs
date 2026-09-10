@@ -72,6 +72,7 @@ pub fn draw_primitives(
         runtime,
         camera_position,
         camera_forward,
+        deferred,
     )?;
     let skinned_ms = started
         .map(|v| v.elapsed().as_secs_f64() * 1000.0)
@@ -189,6 +190,7 @@ pub fn draw_primitives_gbuffer(
         runtime,
         camera_position,
         camera_forward,
+        deferred,
     )?;
     let skinned_ms = started
         .map(|v| v.elapsed().as_secs_f64() * 1000.0)

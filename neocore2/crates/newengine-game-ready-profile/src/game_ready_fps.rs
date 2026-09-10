@@ -144,6 +144,16 @@ impl GameReadyFpsApp {
         RuntimeHostLauncher::new(Self::launch_spec(), self)
             .run_process_with_frontend(WindowedHostFrontend::new(GAME_READY_FPS_WINDOW_TITLE))
     }
+
+    #[inline]
+    pub fn run_process_with_resolved_project(
+        self,
+        project: newengine_project_runtime::ProjectRuntimeContext,
+    ) -> ! {
+        RuntimeHostLauncher::new(Self::launch_spec(), self)
+            .with_resolved_project(project)
+            .run_process_with_frontend(WindowedHostFrontend::new(GAME_READY_FPS_WINDOW_TITLE))
+    }
 }
 
 impl RuntimeHostAppProfile for GameReadyFpsApp {

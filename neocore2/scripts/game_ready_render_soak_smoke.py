@@ -56,7 +56,9 @@ def args() -> argparse.Namespace:
     parser.add_argument('--startup-timeout',type=float,default=45.0)
     parser.add_argument('--gameplay-timeout',type=float,default=120.0)
     parser.add_argument('--warmup-frames',type=int,default=120)
+    parser.add_argument('--gameplay-warmup-seconds',type=float,default=8.0)
     parser.add_argument('--budget-ms',type=float,default=16.67)
+    parser.add_argument('--render-warn-ms',type=float,default=1000.0)
     parser.add_argument('--max-frame-ms',type=float,default=33.34)
     parser.add_argument('--max-over-budget-ratio',type=float,default=0.05)
     parser.add_argument('--min-samples',type=int,default=8)
@@ -108,7 +110,7 @@ def main()->int:
         return 2
     opt=args()
     root=Path(__file__).resolve().parents[1]
-    exe=(opt.exe or root/'target/release/game-ready-fps.exe').resolve()
+    exe=(opt.exe or root/'target/release/NewEngine.exe').resolve()
     if not exe.is_file():
         print(f'executable not found: {exe}',file=sys.stderr)
         return 2
@@ -123,21 +125,27 @@ def main()->int:
     user32=ctypes.windll.user32
     process:subprocess.Popen[str]|None=None
     memory_samples:list[tuple[float,int]]=[]
+    soak_started_unix_ms:int|None=None
 
     def stderr_text()->str:
         try: return stderr_path.read_text(encoding='utf-8',errors='replace')
         except FileNotFoundError: return ''
 
     def wait_for(needle:str,timeout:float,label:str)->None:
+        wait_for_any((needle,),timeout,label)
+
+    def wait_for_any(needles:tuple[str,...],timeout:float,label:str)->str:
         deadline=time.monotonic()+timeout
         while time.monotonic()<deadline:
             if process is not None and process.poll() is not None:
                 raise RuntimeError(f'process exited {process.returncode} while waiting for {label}')
-            if needle in stderr_text():
-                print(f'PASS {label}',flush=True)
-                return
+            text=stderr_text()
+            for needle in needles:
+                if needle in text:
+                    print(f'PASS {label}: {needle}',flush=True)
+                    return needle
             time.sleep(.2)
-        raise RuntimeError(f'timeout waiting for {label}: {needle}')
+        raise RuntimeError(f'timeout waiting for {label}: {needles}')
 
     def windows(pid:int):
         found=[]
@@ -172,7 +180,9 @@ def main()->int:
     env=os.environ.copy(); env['RUST_BACKTRACE']='1'
     env['NEWENGINE_RENDER_PROFILER_SAMPLE_INTERVAL_FRAMES']='30'
     env['NEWENGINE_RENDER_SLOW_PROFILE_INTERVAL_FRAMES']='30'
-    env['NEWENGINE_RENDER_WARN_MS']=str(opt.budget_ms)
+    # Slow-frame warning emission is diagnostic I/O and must not perturb the benchmark.
+    # Frame-budget pass/fail is computed from StarProfiler samples below.
+    env['NEWENGINE_RENDER_WARN_MS']=str(max(opt.render_warn_ms,opt.max_frame_ms))
     env['NEWENGINE_PLUGIN_ENGINE_PROFILER_STARPROFILER__diagnostics__max_recent_jobs']='16384'
     for key in ('NEWENGINE_PLUGIN_DIR','NEWENGINE_PLUGINS_DIR','NEWENGINE_PLATFORM_RUNTIME_DIR','NEWENGINE_PLATFORM_EARLY_LOG','NEWENGINE_WINIT_EARLY_LOG'):
         env.pop(key,None)
@@ -182,7 +192,9 @@ def main()->int:
     verdict:dict[str,object]={
         'schema':'northstar.game-ready.render-soak.v1',
         'duration_seconds':opt.duration,
+        'gameplay_warmup_seconds':opt.gameplay_warmup_seconds,
         'budget_ms':opt.budget_ms,
+        'render_warn_ms':max(opt.render_warn_ms,opt.max_frame_ms),
         'frame_budget':None,
         'memory_plateau':None,
         'ulog':None,
@@ -191,13 +203,34 @@ def main()->int:
         with stdout_path.open('w',encoding='utf-8') as out, stderr_path.open('w',encoding='utf-8') as err:
             process=subprocess.Popen([str(exe),'--no-startup-window'],cwd=root,env=env,stdout=out,stderr=err,text=True)
             print(f'PROCESS pid={process.pid}',flush=True)
-            wait_for("authored game .neui mounted ref='ui/frontend/main_menu.neui@surface'",opt.startup_timeout,'main menu mounted')
-            hwnd,_=game_window(); click(hwnd,240,336)
-            wait_for(transition('main_menu','loading','game.start'),10,'main menu -> loading')
-            wait_for(transition('loading','gameplay','runtime_ready'),opt.gameplay_timeout,'loading -> gameplay')
-            wait_for("authored game .neui mounted ref='ui/game/game_hud.neui@surface'",30,'game HUD mounted')
+            legacy_menu = "authored game .neui mounted ref='ui/frontend/main_menu.neui@surface'"
+            direct_gameplay = (
+                "render controller: scene launch gate released; loading overlay deactivated; "
+                "deferring first world present to next frame"
+            )
+            route=wait_for_any(
+                (direct_gameplay,legacy_menu),
+                max(opt.startup_timeout,opt.gameplay_timeout),
+                'playable route',
+            )
+            if route==legacy_menu:
+                hwnd,_=game_window(); click(hwnd,240,336)
+                wait_for(transition('main_menu','loading','game.start'),10,'main menu -> loading')
+                wait_for(transition('loading','gameplay','runtime_ready'),opt.gameplay_timeout,'loading -> gameplay')
+                wait_for("authored game .neui mounted ref='ui/game/game_hud.neui@surface'",30,'game HUD mounted')
+                print('PLAYABLE_ROUTE legacy-menu',flush=True)
+            else:
+                print('PLAYABLE_ROUTE direct-gameplay',flush=True)
+            gameplay_warmup=max(0.0,opt.gameplay_warmup_seconds)
+            if gameplay_warmup>0.0:
+                print(f'GAMEPLAY_WARMUP duration={gameplay_warmup:.1f}s',flush=True)
+                warmup_deadline=time.monotonic()+gameplay_warmup
+                while time.monotonic()<warmup_deadline:
+                    if process.poll() is not None:
+                        raise RuntimeError(f'process exited during gameplay warmup: {process.returncode}')
+                    time.sleep(min(.25,max(0.0,warmup_deadline-time.monotonic())))
             print(f'SOAK duration={opt.duration:.1f}s',flush=True)
-            soak_started=time.monotonic(); deadline=soak_started+opt.duration
+            soak_started=time.monotonic(); soak_started_unix_ms=int(time.time()*1000); deadline=soak_started+opt.duration
             next_heartbeat=soak_started+max(1.0,opt.heartbeat_seconds)
             max_stderr_bytes=max(1,int(opt.max_stderr_mib*1024*1024))
             while time.monotonic()<deadline:
@@ -245,7 +278,7 @@ def main()->int:
         return 1
 
     report=json.loads(profiler_path.read_text(encoding='utf-8'))
-    samples=[job for job in report.get('completed_jobs',[]) if job.get('name')=='render cpu profile' and isinstance(job.get('frame_id'),(int,float)) and job['frame_id']>=opt.warmup_frames]
+    samples=[job for job in report.get('completed_jobs',[]) if job.get('name')=='render cpu profile' and isinstance(job.get('frame_id'),(int,float)) and job['frame_id']>=opt.warmup_frames and (soak_started_unix_ms is None or (job.get('ended_unix_ms') or 0)>=soak_started_unix_ms)]
     values=[float(job['elapsed_ms']) for job in samples if isinstance(job.get('elapsed_ms'),(int,float))]
     if len(values)<opt.min_samples:
         print(f'FAIL insufficient post-warmup samples: {len(values)} < {opt.min_samples}',file=sys.stderr)
@@ -271,6 +304,20 @@ def main()->int:
             print(f'FAIL max {maximum:.3f}ms exceeds {opt.max_frame_ms:.3f}ms',file=sys.stderr); result=1
         if ratio>opt.max_over_budget_ratio:
             print(f'FAIL over-budget ratio {ratio:.3f} exceeds {opt.max_over_budget_ratio:.3f}',file=sys.stderr); result=1
+
+    platform_samples=[job for job in report.get('completed_jobs',[]) if job.get('category')=='platform.frame' and isinstance(job.get('frame_id'),(int,float)) and isinstance(job.get('ended_unix_ms'),(int,float)) and (soak_started_unix_ms is None or job['ended_unix_ms']>=soak_started_unix_ms)]
+    platform_samples.sort(key=lambda job:job['ended_unix_ms'])
+    if len(platform_samples)>=2:
+        frame_delta=float(platform_samples[-1]['frame_id'])-float(platform_samples[0]['frame_id'])
+        time_delta=(float(platform_samples[-1]['ended_unix_ms'])-float(platform_samples[0]['ended_unix_ms']))/1000.0
+        observed_fps=frame_delta/time_delta if time_delta>0.0 else math.nan
+        print(f'OBSERVED_FPS fps={observed_fps:.3f} frame_delta={frame_delta:.0f} span_seconds={time_delta:.3f}')
+        verdict['observed_fps']={
+            'fps':observed_fps,
+            'frame_delta':frame_delta,
+            'span_seconds':time_delta,
+            'samples':len(platform_samples),
+        }
 
     memory_warmup=min(max(0.0,opt.memory_warmup_seconds),max(0.0,opt.duration*0.5))
     warm_memory=[(elapsed,value) for elapsed,value in memory_samples if elapsed>=memory_warmup]

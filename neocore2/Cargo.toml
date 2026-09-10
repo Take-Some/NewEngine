@@ -206,7 +206,7 @@ members = [
     "crates/newengine-world-runtime-api",
     "crates/newengine-world-environment-api",
     "crates/newengine-world-environment-runtime",
-    "crates/newengine-world-runtime",
+    "crates/newengine-world-runtime", "rustc-isolation-test",
 ]
 # GameFirst workspace: editor/preview/gizmo crates are intentionally not members.
 # Editor tooling will return later as a separate product layer, not as runtime ballast.

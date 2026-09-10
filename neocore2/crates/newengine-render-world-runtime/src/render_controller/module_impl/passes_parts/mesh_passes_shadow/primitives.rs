@@ -109,13 +109,11 @@ pub(super) fn draw_primitives_shadow_body(
             entries.push(entry);
         }
     }
-    sort_by_distance_then_key(&mut foliage_entries);
-    sort_by_distance_then_key(&mut entries);
     let shadow_visible = entries.len().saturating_add(foliage_entries.len());
     let shadow_budget = primitive_budget(runtime, true);
     let foliage_shadow_budget = foliage_instance_budget(runtime, true);
-    entries.truncate(shadow_budget);
-    foliage_entries.truncate(foliage_shadow_budget);
+    sort_and_truncate_by_distance_then_key(&mut entries, shadow_budget);
+    sort_and_truncate_by_distance_then_key(&mut foliage_entries, foliage_shadow_budget);
     let scan_ms = scan_started.elapsed().as_secs_f32() * 1000.0;
     let plan_started = std::time::Instant::now();
 

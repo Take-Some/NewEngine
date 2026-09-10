@@ -22,7 +22,7 @@ use super::frame_envelope_builder::build_runtime_frame_envelope;
 use super::frame_snapshots::SceneRenderSnapshot;
 use super::frame_submit::submit_frame_envelope;
 use super::frame_types::{PlayableFrameOutcome, RenderFrameScope, WorldFrameState};
-use super::profiling::{emit_timed_profile, FrameCpuProfile};
+use super::profiling::{emit_timed_profile_deferred, timed_profile_due, FrameCpuProfile};
 use super::{lights, passes, picking, postfx, shadows};
 use newengine_scene_bridge_runtime::scene_bridge::{
     apply_engine_view_postfx, EngineViewTransitionPhase,

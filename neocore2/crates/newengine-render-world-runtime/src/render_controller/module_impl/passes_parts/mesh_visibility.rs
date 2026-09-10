@@ -4,9 +4,9 @@ use std::sync::OnceLock;
 
 /// Runtime draw budgets keep the current non-instanced backend path stable.
 /// They are intentionally deterministic: nearest objects win, ties are stable-key ordered.
-pub(super) const RUNTIME_OPAQUE_PRIMITIVE_BUDGET: usize = 96;
+pub(super) const RUNTIME_OPAQUE_PRIMITIVE_BUDGET: usize = 4096;
 pub(super) const RUNTIME_SHADOW_PRIMITIVE_BUDGET: usize = 48;
-pub(super) const EDITOR_OPAQUE_PRIMITIVE_BUDGET: usize = 256;
+pub(super) const EDITOR_OPAQUE_PRIMITIVE_BUDGET: usize = 4096;
 pub(super) const EDITOR_SHADOW_PRIMITIVE_BUDGET: usize = 160;
 pub(super) const RUNTIME_FOLIAGE_INSTANCE_BUDGET: usize = 16 * 1024;
 pub(super) const EDITOR_FOLIAGE_INSTANCE_BUDGET: usize = 16 * 1024;
@@ -54,6 +54,12 @@ impl MeshRuntimePolicy {
             0.5,
             2.0,
         );
+        let view_distance_meters = newengine_runtime_env::var_f32(
+            newengine_core::startup_window::ENV_VIEW_DISTANCE_METERS,
+            1000.0,
+            100.0,
+            10_000.0,
+        );
         let lod_scaled =
             |value: f32, min: f32, max: f32| (value * lod_distance_scale).clamp(min, max);
 
@@ -64,7 +70,7 @@ impl MeshRuntimePolicy {
                         "NEWENGINE_EDITOR_OPAQUE_PRIMITIVE_BUDGET",
                         EDITOR_OPAQUE_PRIMITIVE_BUDGET,
                         8,
-                        512,
+                        16 * 1024,
                     ),
                     usize_var(
                         "NEWENGINE_EDITOR_SHADOW_PRIMITIVE_BUDGET",
@@ -78,7 +84,7 @@ impl MeshRuntimePolicy {
                         "NEWENGINE_RUNTIME_OPAQUE_PRIMITIVE_BUDGET",
                         RUNTIME_OPAQUE_PRIMITIVE_BUDGET,
                         8,
-                        512,
+                        16 * 1024,
                     ),
                     usize_var(
                         "NEWENGINE_RUNTIME_SHADOW_PRIMITIVE_BUDGET",
@@ -159,33 +165,33 @@ impl MeshRuntimePolicy {
             terrain_render_distance: lod_scaled(
                 newengine_runtime_env::var_f32(
                     "NEWENGINE_TERRAIN_RENDER_DISTANCE",
-                    96.0,
+                    view_distance_meters,
                     32.0,
-                    2048.0,
+                    10_000.0,
                 ),
                 16.0,
-                4096.0,
+                10_000.0,
             ),
             primitive_render_distance: [
                 lod_scaled(
                     newengine_runtime_env::var_f32(
                         "NEWENGINE_PRIMITIVE_RENDER_DISTANCE",
-                        180.0,
+                        view_distance_meters,
                         8.0,
-                        2048.0,
+                        10_000.0,
                     ),
                     4.0,
-                    4096.0,
+                    10_000.0,
                 ),
                 lod_scaled(
                     newengine_runtime_env::var_f32(
                         "NEWENGINE_PRIMITIVE_RENDER_DISTANCE",
-                        64.0,
+                        view_distance_meters,
                         8.0,
-                        2048.0,
+                        10_000.0,
                     ),
                     4.0,
-                    4096.0,
+                    10_000.0,
                 ),
             ],
             primitive_shadow_distance: [
@@ -395,13 +401,35 @@ impl<T0, T1, T2, T3, T4, T5, T6> DistanceKeyEntry for (f32, u64, T0, T1, T2, T3,
 }
 
 #[inline]
+fn compare_distance_then_key<T: DistanceKeyEntry>(a: &T, b: &T) -> std::cmp::Ordering {
+    a.distance_sq()
+        .partial_cmp(&b.distance_sq())
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.stable_key().cmp(&b.stable_key()))
+}
+
+#[inline]
 pub(super) fn sort_by_distance_then_key<T: DistanceKeyEntry>(items: &mut [T]) {
-    items.sort_by(|a, b| {
-        a.distance_sq()
-            .partial_cmp(&b.distance_sq())
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.stable_key().cmp(&b.stable_key()))
-    });
+    items.sort_by(compare_distance_then_key);
+}
+
+/// Keep the same deterministic nearest-first admission semantics without sorting
+/// candidates that cannot survive the draw budget. Dense worlds commonly have
+/// thousands of candidates while shadow/quality budgets admit only a fraction.
+#[inline]
+pub(super) fn sort_and_truncate_by_distance_then_key<T: DistanceKeyEntry>(
+    items: &mut Vec<T>,
+    budget: usize,
+) {
+    if budget == 0 {
+        items.clear();
+        return;
+    }
+    if items.len() > budget {
+        let _ = items.select_nth_unstable_by(budget, compare_distance_then_key);
+        items.truncate(budget);
+    }
+    sort_by_distance_then_key(items);
 }
 
 #[inline]
@@ -413,7 +441,7 @@ pub(super) fn max_axis_scale(model: Mat4) -> f32 {
 }
 
 #[inline]
-pub(super) fn transform_sphere(model: Mat4, local_center: Vec3, local_radius: f32) -> (Vec3, f32) {
+pub(in crate::render_controller::module_impl) fn transform_sphere(model: Mat4, local_center: Vec3, local_radius: f32) -> (Vec3, f32) {
     (
         model.transform_point3(local_center),
         local_radius.abs().max(0.001) * max_axis_scale(model),
@@ -425,7 +453,7 @@ pub(super) fn transform_sphere(model: Mat4, local_center: Vec3, local_radius: f3
 /// This is intentionally projection-agnostic: `(radius / distance)^2` preserves the ordering that
 /// matters to residency without coupling the asset scheduler to a specific FOV or viewport size.
 #[inline]
-pub(super) fn sphere_screen_coverage_hint(radius_ws: f32, distance_m: f32) -> f32 {
+pub(in crate::render_controller::module_impl) fn sphere_screen_coverage_hint(radius_ws: f32, distance_m: f32) -> f32 {
     let radius = radius_ws.abs().max(0.001);
     if !distance_m.is_finite() || distance_m <= 0.001 {
         return 1.0;
@@ -481,6 +509,18 @@ pub(super) fn render_scene_culling_enabled() -> bool {
 /// objects retain a tiny unconditional ring to avoid near-plane churn while everything else
 /// must intersect the exact Vulkan/D3D 0..1 clip-space frustum.
 #[inline]
+pub(in crate::render_controller::module_impl) fn sphere_within_render_distance(
+    camera_position: Vec3,
+    center_ws: Vec3,
+    radius_ws: f32,
+    max_distance: f32,
+) -> bool {
+    let radius = radius_ws.abs().max(0.001);
+    let max_d = max_distance.max(radius);
+    (center_ws - camera_position).length_squared() <= (max_d + radius) * (max_d + radius)
+}
+
+#[inline]
 pub(super) fn frustum_sphere_visible(
     frustum: &Frustum,
     camera_position: Vec3,
@@ -490,13 +530,13 @@ pub(super) fn frustum_sphere_visible(
     near_accept_distance: f32,
 ) -> bool {
     let radius = radius_ws.abs().max(0.001);
-    let delta = center_ws - camera_position;
-    let dist2 = delta.length_squared();
     let max_d = max_distance.max(near_accept_distance).max(radius);
-    if dist2 > (max_d + radius) * (max_d + radius) {
+    if !sphere_within_render_distance(camera_position, center_ws, radius, max_d) {
         return false;
     }
 
+    let delta = center_ws - camera_position;
+    let dist2 = delta.length_squared();
     let near = near_accept_distance.max(radius * 1.15).max(0.001);
     if dist2 <= near * near {
         return true;
@@ -510,7 +550,7 @@ pub(super) fn terrain_forward_max_distance() -> f32 {
 }
 
 #[inline]
-pub(super) fn primitive_forward_max_distance(runtime: bool) -> f32 {
+pub(in crate::render_controller::module_impl) fn primitive_forward_max_distance(runtime: bool) -> f32 {
     mesh_runtime_policy().primitive_render_distance[runtime as usize]
 }
 
@@ -541,6 +581,28 @@ mod startup_lod_scale_tests {
     }
 
     #[test]
+    fn runtime_opaque_budget_covers_dense_authored_worlds() {
+        assert!(super::RUNTIME_OPAQUE_PRIMITIVE_BUDGET >= 4096);
+    }
+
+    #[test]
+    fn render_distance_rejects_far_spheres_without_camera_angle_dependency() {
+        let camera = newengine_math::Vec3::ZERO;
+        assert!(super::sphere_within_render_distance(
+            camera,
+            newengine_math::Vec3::new(0.0, 0.0, 99.0),
+            2.0,
+            100.0,
+        ));
+        assert!(!super::sphere_within_render_distance(
+            camera,
+            newengine_math::Vec3::new(0.0, 0.0, 110.0),
+            2.0,
+            100.0,
+        ));
+    }
+
+    #[test]
     fn frustum_culler_rejects_far_offscreen_spheres() {
         let frustum = newengine_camera::Frustum::from_view_proj(newengine_math::Mat4::IDENTITY);
         assert!(super::frustum_sphere_visible(
@@ -567,6 +629,32 @@ mod startup_lod_scale_tests {
         assert_eq!(scale_lod_distance(100.0, 0.75, 8.0, 4096.0), 75.0);
         assert_eq!(scale_lod_distance(100.0, 1.5, 8.0, 4096.0), 150.0);
         assert_eq!(scale_lod_distance(3000.0, 2.0, 8.0, 4096.0), 4096.0);
+    }
+
+    #[test]
+    fn budgeted_distance_selection_matches_full_sort_prefix() {
+        let source = vec![
+            (9.0_f32, 90_u64, "nine"),
+            (1.0, 11, "one-b"),
+            (4.0, 40, "four"),
+            (1.0, 10, "one-a"),
+            (16.0, 160, "sixteen"),
+            (2.0, 20, "two"),
+        ];
+        let mut expected = source.clone();
+        super::sort_by_distance_then_key(&mut expected);
+        expected.truncate(3);
+
+        let mut actual = source;
+        super::sort_and_truncate_by_distance_then_key(&mut actual, 3);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn budgeted_distance_selection_handles_zero_budget() {
+        let mut items = vec![(1.0_f32, 1_u64, ())];
+        super::sort_and_truncate_by_distance_then_key(&mut items, 0);
+        assert!(items.is_empty());
     }
 
     #[test]

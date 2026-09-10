@@ -37,6 +37,21 @@ impl FrameGraphBuilder {
         self
     }
 
+    /// Compute scheduling boundary for previous-frame Hi-Z driven GPU visibility.
+    /// The data-plane buffers are externally owned RenderApi resources; the graph pass
+    /// deliberately carries no fake transient allocation and exists to order compute before raster.
+    #[inline]
+    pub fn visibility_cull(mut self) -> Self {
+        self.add_phase_pass(StandardRenderPhase::VisibilityCull, |pass| {
+            let mut pass = pass
+                .with_domain(RenderGraphPassDomain::Render3d)
+                .with_culling(false);
+            pass.queue = newengine_render_api::RenderGraphQueueKind::Compute;
+            pass
+        });
+        self
+    }
+
     #[inline]
     pub fn particle_simulation(mut self) -> Self {
         if !self.has_resource(RG_VFX_PARTICLE_STATE) {
@@ -243,6 +258,7 @@ impl FrameGraphBuilder {
     }
 
     pub fn gbuffer(mut self) -> Self {
+        let has_shadow = self.has_resource(RG_SHADOW_MAP);
         self.graph.resources.push(
             RenderGraphResourceDesc::transient_texture(
                 RG_GBUFFER_DEPTH,
@@ -284,7 +300,8 @@ impl FrameGraphBuilder {
             .with_semantic(RenderGraphResourceSemantic::GBufferMaterial),
         );
         self.add_phase_pass(StandardRenderPhase::ViewportGBuffer, |pass| {
-            pass.with_domain(RenderGraphPassDomain::Render3d)
+            let pass = pass
+                .with_domain(RenderGraphPassDomain::Render3d)
                 .writes(RG_GBUFFER_DEPTH, RenderGraphResourceUsage::DepthAttachment)
                 .writes(RG_GBUFFER_ALBEDO, RenderGraphResourceUsage::ColorAttachment)
                 .writes(RG_GBUFFER_NORMAL, RenderGraphResourceUsage::ColorAttachment)
@@ -292,7 +309,12 @@ impl FrameGraphBuilder {
                     RG_GBUFFER_MATERIAL,
                     RenderGraphResourceUsage::ColorAttachment,
                 )
-                .draw_list(DrawListKind::OpaqueForward)
+                .draw_list(DrawListKind::OpaqueForward);
+            if has_shadow {
+                pass.reads(RG_SHADOW_MAP, RenderGraphResourceUsage::SampledTexture)
+            } else {
+                pass
+            }
         });
         self
     }

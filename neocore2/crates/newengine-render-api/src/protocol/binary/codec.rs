@@ -67,6 +67,7 @@ pub(super) fn put_optional_render_draw_list_kind(
 pub(super) fn render_graph_pass_kind_tag(kind: RenderGraphPassKind) -> u8 {
     match kind {
         RenderGraphPassKind::DepthPrepass => 1,
+        RenderGraphPassKind::VisibilityCull => 25,
         RenderGraphPassKind::ShadowMap => 2,
         RenderGraphPassKind::ShadowCascadeMap => 3,
         RenderGraphPassKind::LocalShadowMap => 20,
@@ -97,6 +98,7 @@ pub(super) fn render_graph_pass_kind_tag(kind: RenderGraphPassKind) -> u8 {
 pub(super) fn render_graph_pass_kind_from_tag(tag: u8) -> Result<RenderGraphPassKind, String> {
     match tag {
         1 => Ok(RenderGraphPassKind::DepthPrepass),
+        25 => Ok(RenderGraphPassKind::VisibilityCull),
         2 => Ok(RenderGraphPassKind::ShadowMap),
         3 => Ok(RenderGraphPassKind::ShadowCascadeMap),
         20 => Ok(RenderGraphPassKind::LocalShadowMap),

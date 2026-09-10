@@ -80,12 +80,19 @@ impl RenderFramePlan {
         let mut warnings = Vec::new();
 
         for list in &self.draw_lists {
-            let route_count = self
+            let routes = self
                 .graph
                 .passes
                 .iter()
                 .filter(|pass| pass.draw_lists.contains(&list.kind))
-                .count();
+                .map(|pass| pass.kind)
+                .collect::<Vec<_>>();
+            let route_count = routes.len();
+            let intentional_deferred_opaque_split = list.kind
+                == newengine_render_api::RenderDrawListKind::OpaqueForward
+                && route_count == 2
+                && routes.contains(&newengine_render_api::RenderGraphPassKind::GBuffer)
+                && routes.contains(&newengine_render_api::RenderGraphPassKind::ForwardOpaque);
 
             if route_count == 0 {
                 errors.push(
@@ -98,7 +105,7 @@ impl RenderFramePlan {
                     )
                     .with_draw_list(list.kind),
                 );
-            } else if route_count > 1 {
+            } else if route_count > 1 && !intentional_deferred_opaque_split {
                 warnings.push(
                     DrawListRouteValidationIssue::new(
                         "draw_list.multiple_routes",

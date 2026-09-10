@@ -41,6 +41,7 @@ newengine-plugin-api = { path = "../newengine-plugin-api" }
 newengine-plugin-host = { path = "../newengine-plugin-host" }
 newengine-plugin-manager-bridge = { path = "../newengine-plugin-manager-bridge" }
 newengine-render-api = { path = "../newengine-render-api" }
+newengine-visibility-api = { path = "../newengine-visibility-api" }
 newengine-primitives = { path = "../newengine-primitives" }
 newengine-procedural-noise = { path = "../newengine-procedural-noise" }
 newengine-world-runtime-api = { path = "../newengine-world-runtime-api" }

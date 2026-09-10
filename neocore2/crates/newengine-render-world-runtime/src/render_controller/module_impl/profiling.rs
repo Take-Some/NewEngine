@@ -122,6 +122,77 @@ pub(super) fn profiler_sample_interval_frames() -> u64 {
     newengine_runtime_policy::diagnostics_policy().render_profiler_sample_interval_frames
 }
 
+/// Returns true only when `emit_timed_profile` would produce either a profiler
+/// sample or a human-readable trace line for this frame.
+///
+/// Keep this predicate cheap: render orchestration uses it to avoid allocating
+/// breakdown/UI strings on frames where diagnostics are completely idle.
+pub(super) fn timed_profile_due(frame_index: u64, trace_frame: bool, total_ms: f32) -> bool {
+    let policy = newengine_runtime_policy::diagnostics_policy();
+    let slow = total_ms >= policy.render_warn_ms;
+    let traceable = trace_frame || total_ms >= policy.render_trace_ms;
+    let sample_due = policy.render_profiler_samples
+        && (trace_frame
+            || frame_index.is_multiple_of(policy.render_profiler_sample_interval_frames)
+            || total_ms >= policy.render_profiler_outlier_ms);
+    let log_due = if !traceable && !slow {
+        false
+    } else if slow
+        && !trace_frame
+        && !frame_index.is_multiple_of(policy.render_slow_profile_interval_frames)
+    {
+        false
+    } else {
+        true
+    };
+    sample_due || log_due
+}
+
+/// Moves diagnostic serialization/event fan-out off the render critical path.
+///
+/// Profiler event sinks are synchronous ABI callbacks and may perform JSON
+/// decoding, record expansion and mutex-protected retention. Sampling must not
+/// turn those diagnostics into a periodic frame hitch. The engine-wide worker
+/// pool owns this work; under background-lane backpressure a diagnostic sample
+/// is dropped rather than falling back to synchronous render-thread execution.
+pub(super) fn emit_timed_profile_deferred(
+    thread_pool: Option<&newengine_core::ThreadPoolHandle>,
+    label: &'static str,
+    frame_index: u64,
+    trace_frame: bool,
+    total_ms: f32,
+    breakdown: String,
+    suffix: String,
+) {
+    if !timed_profile_due(frame_index, trace_frame, total_ms) {
+        return;
+    }
+
+    if let Some(jobs) = thread_pool {
+        const MAX_PENDING_DIAGNOSTIC_JOBS: usize = 8;
+        if jobs.pending_for_lane(newengine_core::TaskLane::Background) < MAX_PENDING_DIAGNOSTIC_JOBS
+        {
+            let _ = jobs.submit_lane(
+                newengine_core::TaskLane::Background,
+                "render.profiler.emit",
+                move || {
+                    emit_timed_profile(
+                        label,
+                        frame_index,
+                        trace_frame,
+                        total_ms,
+                        breakdown,
+                        suffix,
+                    );
+                },
+            );
+        }
+        return;
+    }
+
+    emit_timed_profile(label, frame_index, trace_frame, total_ms, breakdown, suffix);
+}
+
 pub(super) fn emit_timed_profile(
     label: &'static str,
     frame_index: u64,

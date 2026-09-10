@@ -76,7 +76,25 @@ impl PluginManager {
             });
         }
         let dir = canonicalize_if_exists(&dir);
-        let graph = scan_plugin_id(&dir, plugin_id)?;
+        let needs_inventory = self
+            .targeted_discovery_cache
+            .as_ref()
+            .is_none_or(|inventory| inventory.dir != dir);
+        if needs_inventory {
+            self.targeted_discovery_cache = Some(scan_targeted_inventory(&dir)?);
+        }
+        let inventory = self
+            .targeted_discovery_cache
+            .as_ref()
+            .expect("targeted discovery inventory must exist after initialization");
+        newengine_ulog_api::ulog::debug!(
+            "plugins: targeted discovery inventory hit dir='{}' plugin='{}' entries={} candidate_ids={}",
+            display_clean(&inventory.dir),
+            plugin_id,
+            inventory.entries_total,
+            inventory.candidate_id_count(),
+        );
+        let graph = scan_plugin_id_from_inventory(inventory, plugin_id)?;
         let selection = build_load_selection(
             &graph,
             LoadPhaseFilter::All,
@@ -136,6 +154,20 @@ impl PluginManager {
                 );
                 return Ok((graph.clone(), false));
             }
+        }
+
+        if let Some(graph) = self.composition_discovery_cache.get(&dir) {
+            newengine_ulog_api::ulog::debug!(
+                "plugins: composition discovery reuse hit dir='{}' entries={} dynlibs={}",
+                display_clean(&graph.dir),
+                graph.entries_total,
+                graph.items.len(),
+            );
+            let graph = graph.clone();
+            // Promote the currently requested root into the hot single-root cache so
+            // subsequent phase loads avoid even the composition-map lookup/clone.
+            self.discovery_cache = Some(graph.clone());
+            return Ok((graph, false));
         }
 
         let graph = scan_plugins_dir(&dir)?;

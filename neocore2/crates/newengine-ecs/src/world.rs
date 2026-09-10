@@ -111,6 +111,18 @@ impl World {
         self.storages.len()
     }
 
+    /// Monotonic revision of the entity membership for component storage `T`.
+    ///
+    /// Value edits do not change this revision; adding/removing `T` or despawning an
+    /// entity that owns `T` does. This lets high-frequency consumers distinguish
+    /// structural changes from ordinary component updates in O(1).
+    #[inline]
+    pub fn component_membership_revision<T: Component>(&self) -> u64 {
+        self.storage::<T>()
+            .map(|s| s.membership_revision)
+            .unwrap_or(0)
+    }
+
     /// Number of ECS resources currently stored in the world.
     #[inline]
     pub fn resource_count(&self) -> usize {
@@ -283,6 +295,7 @@ impl World {
             s.changed_tick.insert(id, tick);
             s.max_added_tick = s.max_added_tick.max(tick);
             s.max_changed_tick = s.max_changed_tick.max(tick);
+            s.membership_revision = s.membership_revision.saturating_add(1).max(1);
         }
 
         true
@@ -305,6 +318,7 @@ impl World {
         // If the component existed, update the max tick.
         if v.is_some() {
             s.max_changed_tick = s.max_changed_tick.max(tick);
+            s.membership_revision = s.membership_revision.saturating_add(1).max(1);
         }
 
         v
@@ -490,5 +504,39 @@ impl World {
     #[inline]
     pub fn query2_ids<A: Component, B: Component>(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.query2::<A, B>().map(|(id, _, _)| id)
+    }
+}
+
+
+#[cfg(test)]
+mod membership_revision_tests {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    struct Marker(u32);
+
+    #[test]
+    fn membership_revision_changes_only_for_add_remove_or_despawn() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        assert_eq!(world.component_membership_revision::<Marker>(), 0);
+
+        assert!(world.insert(entity, Marker(1)));
+        let added = world.component_membership_revision::<Marker>();
+        assert!(added > 0);
+
+        assert!(world.insert(entity, Marker(2)));
+        assert_eq!(world.component_membership_revision::<Marker>(), added);
+        assert_eq!(world.get::<Marker>(entity).unwrap().0, 2);
+
+        assert!(world.remove::<Marker>(entity).is_some());
+        let removed = world.component_membership_revision::<Marker>();
+        assert!(removed > added);
+
+        assert!(world.insert(entity, Marker(3)));
+        let readded = world.component_membership_revision::<Marker>();
+        assert!(readded > removed);
+        assert!(world.despawn(entity));
+        assert!(world.component_membership_revision::<Marker>() > readded);
     }
 }

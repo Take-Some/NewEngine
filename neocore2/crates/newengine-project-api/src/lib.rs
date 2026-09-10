@@ -34,6 +34,37 @@ pub const PROJECT_MANIFEST_CONTRACT: &str = "newengine.project.v1";
 pub const PROJECT_STARTUP_SCENE_ENV: &str = "NEWENGINE_PROJECT_STARTUP_SCENE";
 pub const PROJECT_LAUNCH_PRESET_ENV: &str = "NEWENGINE_PROJECT_LAUNCH_PRESET";
 pub const PROJECT_RUNTIME_PROFILE_ABI_V1: &str = "newengine.runtime-profile/v1";
+pub const RESOLVED_PROJECT_CONTEXT_PAYLOAD_SCHEMA_V1: u32 = 1;
+
+/// Fully resolved project handoff carried across the runtime-profile ABI.
+/// The launcher parses and validates `game.toml` once; downstream runtime hosts
+/// reconstruct their in-memory registries from this immutable payload instead of
+/// reopening and re-resolving the authored manifest during the same process launch.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedProjectContextPayloadV1 {
+    pub schema_version: u32,
+    pub manifest_path: std::path::PathBuf,
+    pub project_root: std::path::PathBuf,
+    pub manifest: ProjectManifest,
+    pub launch: ResolvedProjectLaunch,
+}
+
+impl ResolvedProjectContextPayloadV1 {
+    pub fn new(
+        manifest_path: std::path::PathBuf,
+        project_root: std::path::PathBuf,
+        manifest: ProjectManifest,
+        launch: ResolvedProjectLaunch,
+    ) -> Self {
+        Self {
+            schema_version: RESOLVED_PROJECT_CONTEXT_PAYLOAD_SCHEMA_V1,
+            manifest_path,
+            project_root,
+            manifest,
+            launch,
+        }
+    }
+}
 pub const PROJECT_MANIFEST_CONTRACT_SPEC: newengine_contract_api::ContractSpec =
     newengine_contract_api::ContractSpec::new(
         "project.manifest",
