@@ -202,9 +202,14 @@ pub enum RenderFeature {
     MultiDrawIndirect,
     /// Backend can consume a GPU-authored draw-count buffer without CPU readback.
     IndirectDrawCount,
+    /// Provider implements V2 source->compacted indirect visibility with a GPU draw-count buffer.
+    VisibilityIndirectCompaction,
     PvsVisibility,
     ZoneCulling,
     Reflections,
+    ScreenSpaceReflections,
+    FroxelFog,
+    FroxelTemporalReprojection,
     PlanarReflections,
     MirrorReflections,
     WaterReflections,
@@ -326,6 +331,7 @@ impl RenderBackendCapabilities {
                 RenderFeature::PvsVisibility,
                 RenderFeature::ZoneCulling,
                 RenderFeature::Reflections,
+                RenderFeature::ScreenSpaceReflections,
                 RenderFeature::PlanarReflections,
                 RenderFeature::MirrorReflections,
                 RenderFeature::WaterReflections,

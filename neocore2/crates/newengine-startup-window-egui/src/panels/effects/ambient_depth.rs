@@ -66,6 +66,63 @@ impl PreStartGraphicsApp {
 
                         setting_label(
                             ui,
+                            "Screen-space reflections",
+                            "Deferred-only raster reflections from scene color + GBuffer depth/normal/material",
+                        );
+                        let changed =
+                            engine_toggle(ui, &mut self.settings.graphics.ssr_enabled, "Enabled");
+                        mark_custom_if_changed(&mut self.settings, changed);
+                        ui.end_row();
+                        float_parameter_row(
+                            ui,
+                            "SSR intensity",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_intensity,
+                            0.0..=2.0,
+                            0.01,
+                        );
+                        float_parameter_row(
+                            ui,
+                            "SSR max distance (m)",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_max_distance_m,
+                            2.0..=200.0,
+                            1.0,
+                        );
+                        float_parameter_row(
+                            ui,
+                            "SSR thickness (m)",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_thickness_m,
+                            0.02..=2.0,
+                            0.01,
+                        );
+                        float_parameter_row(
+                            ui,
+                            "SSR stride (m)",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_stride_m,
+                            0.05..=4.0,
+                            0.02,
+                        );
+                        float_parameter_row(
+                            ui,
+                            "SSR roughness cutoff",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_roughness_cutoff,
+                            0.05..=1.0,
+                            0.01,
+                        );
+                        integer_parameter_row(
+                            ui,
+                            "SSR max steps",
+                            self.settings.graphics.ssr_enabled,
+                            &mut self.settings.graphics.ssr_max_steps,
+                            8..=128,
+                        );
+
+                        setting_label(
+                            ui,
                             "Depth of field",
                             "Allows view-provided focus and blur parameters",
                         );

@@ -71,6 +71,10 @@ impl RuntimeRenderController {
 
     /// Advances imported model CPU preparation and GPU mesh residency without
     /// performing graph/model decode work on the render thread.
+    ///
+    /// Every resident model part is backfilled into the additive geometry arena as part of the
+    /// same bounded upload budget. This keeps legacy direct rendering authoritative while making
+    /// geometry residency independent from the path that first populated `prim_cache`.
     pub(super) fn pump_model_residency(
         &mut self,
         r: &mut dyn RenderApi,
@@ -106,12 +110,24 @@ impl RuntimeRenderController {
                     break 'sources;
                 }
                 let primitive_id = Self::model_part_primitive_id(&bundle, part_index);
-                if self.gpu.meshes.prim_cache.contains_key(&primitive_id) {
+                let legacy_ready = self.gpu.meshes.prim_cache.contains_key(&primitive_id);
+                let arena_ready = !self.gpu.geometry.is_enabled()
+                    || self.gpu.geometry.handle_for(primitive_id).is_some();
+                if legacy_ready && arena_ready {
                     continue;
                 }
-                let label = format!("model.runtime:{}:{}", source, part_index);
-                let gpu = upload_primitive_mesh(r, &part.mesh, &label)?;
-                self.gpu.meshes.prim_cache.insert(primitive_id, gpu);
+
+                if !legacy_ready {
+                    let label = format!("model.runtime:{}:{}", source, part_index);
+                    let gpu = upload_primitive_mesh(r, &part.mesh, &label)?;
+                    self.gpu.meshes.prim_cache.insert(primitive_id, gpu);
+                }
+                if !arena_ready {
+                    let _ = self
+                        .gpu
+                        .geometry
+                        .ensure_primitive_fail_open(r, primitive_id, &part.mesh);
+                }
                 uploaded = uploaded.saturating_add(1);
             }
         }
@@ -122,14 +138,18 @@ impl RuntimeRenderController {
         }
 
         if uploaded > 0 && newengine_ulog_api::ulog::trace_enabled() {
+            let geometry = self.gpu.geometry.stats();
             newengine_ulog_api::ulog::trace!(
-                "model residency: gpu uploaded frame={} parts={} budget={} active_models={} cpu_bundles={} pending_jobs={}",
+                "model residency: gpu uploaded/backfilled frame={} parts={} budget={} active_models={} cpu_bundles={} pending_jobs={} geometry_pages={} geometry_resident={} geometry_retired={}",
                 self.frame.frame_index,
                 uploaded,
                 upload_budget,
                 active_sources.len(),
                 self.gpu.meshes.model_bundle_cache.len(),
                 self.gpu.meshes.model_bundle_jobs.len(),
+                geometry.pages,
+                geometry.resident_slots,
+                geometry.retired_slots,
             );
         }
         Ok(uploaded)

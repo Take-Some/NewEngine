@@ -1443,6 +1443,11 @@
     },
     "graphics": {
       "anisotropy": 0,
+      "geometry_arena_index_page_mib": 16,
+      "geometry_arena_max_pages": 64,
+      "geometry_arena_vertex_page_mib": 32,
+      "gpu_driven_indirect_enabled": false,
+      "gpu_scene_tables_enabled": false,
       "bloom_enabled": true,
       "bloom_intensity": 0.09,
       "bloom_knee": 0.35000000000000003,
@@ -1488,7 +1493,7 @@
       "taa_neighborhood_clamping": 1.0,
       "texture_quality": "medium"
     },
-    "schema_version": 3
+    "schema_version": 6
   },
   "window": {
     "display": {

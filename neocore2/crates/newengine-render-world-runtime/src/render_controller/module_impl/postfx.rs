@@ -37,6 +37,13 @@ pub(super) fn game_sun_postfx_params(
     params.quality.ssao.intensity = launch_graphics.ssao_intensity;
     params.quality.ssao.quality_steps = launch_graphics.ssao_quality_steps;
     params.quality.ssao.half_resolution = launch_graphics.ssao_half_resolution;
+    params.quality.ssr.enabled = launch_graphics.ssr_enabled;
+    params.quality.ssr.intensity = launch_graphics.ssr_intensity;
+    params.quality.ssr.max_distance_m = launch_graphics.ssr_max_distance_m;
+    params.quality.ssr.thickness_m = launch_graphics.ssr_thickness_m;
+    params.quality.ssr.stride_m = launch_graphics.ssr_stride_m;
+    params.quality.ssr.roughness_cutoff = launch_graphics.ssr_roughness_cutoff;
+    params.quality.ssr.max_steps = launch_graphics.ssr_max_steps;
 
     // Contact shadows belong to the shadow authoring policy, not to the backend
     // backend. Bridge the scene-level ShadowSettings into the renderer-facing
@@ -69,6 +76,25 @@ pub(super) fn game_sun_postfx_params(
     params.quality.bloom.knee = launch_graphics.bloom_knee;
     params.quality.bloom.intensity = launch_graphics.bloom_intensity;
     params.quality.bloom.radius = launch_graphics.bloom_radius;
+
+    let fog = world
+        .resource::<newengine_gameplay_world_runtime::gameplay::EnvironmentFogRenderState>()
+        .copied()
+        .unwrap_or_default();
+    params.fog.enabled = fog.enabled && fog.density > 1.0e-7;
+    params.fog.density = fog.density.clamp(0.0, 0.08);
+    params.fog.height_falloff = fog.height_falloff.clamp(0.00005, 0.02);
+    params.fog.color_linear = fog.color_linear.map(|component| component.max(0.0));
+    params.fog.base_height_m = fog.base_height_m;
+    params.fog.start_distance_m = fog.start_distance_m.max(0.0);
+    params.fog.max_opacity = fog.max_opacity.clamp(0.0, 0.98);
+    params.froxel_fog.enabled =
+        params.fog.enabled && launch_graphics.volumetric_fog_enabled;
+    params.froxel_fog.tile_size_px = launch_graphics.froxel_tile_size_px;
+    params.froxel_fog.depth_slices = launch_graphics.froxel_depth_slices;
+    params.froxel_fog.max_distance_m = launch_graphics.froxel_max_distance_m;
+    params.froxel_fog.temporal_feedback = launch_graphics.froxel_temporal_feedback;
+    params.froxel_fog.anisotropy = launch_graphics.froxel_anisotropy;
 
     let Some(sun) = lights::primary_directional_light(world) else {
         return params;
@@ -141,6 +167,42 @@ pub(super) fn game_sun_postfx_params(
     params
 }
 
+pub(super) fn apply_froxel_lighting(
+    mut params: PostFxFrameParams,
+    lights: newengine_render_feature_api::PackedLights,
+) -> PostFxFrameParams {
+    let dst = &mut params.froxel_fog.lighting;
+    dst.directional_dir_intensity = lights.dir_dir_intensity;
+    dst.directional_color = lights.dir_color;
+    dst.point_pos_range = lights.point_pos_range;
+    dst.point_color_intensity = lights.point_color_intensity;
+    dst.point_count = lights.point_count_pad[0]
+        .round()
+        .clamp(0.0, newengine_core::render::MAX_FROXEL_POINT_LIGHTS as f32) as u32;
+    dst.spot_pos_range = lights.spot_pos_range;
+    dst.spot_dir_outer_cos = lights.spot_dir_outer_cos;
+    dst.spot_color_intensity = lights.spot_color_intensity;
+    dst.spot_inner_cos = lights.spot_inner_cos;
+    dst.spot_count = lights.spot_count_pad[0]
+        .round()
+        .clamp(0.0, newengine_core::render::MAX_FROXEL_SPOT_LIGHTS as f32) as u32;
+    dst.csm_enabled = lights.shadow_params[0] > 0.5 && lights.shadow_extra[1] >= 1.0;
+    dst.csm_cascade_count = lights.shadow_extra[1]
+        .round()
+        .clamp(1.0, newengine_core::render::MAX_FROXEL_CSM_CASCADES as f32) as u32;
+    for (dst_mvp, src_mvp) in dst
+        .csm_light_mvp
+        .iter_mut()
+        .zip(lights.shadow_cascade_light_mvp.iter())
+    {
+        *dst_mvp = src_mvp.to_cols_array();
+    }
+    dst.csm_splits = lights.shadow_cascade_splits;
+    dst.csm_shadow_params = lights.shadow_params;
+    dst.csm_shadow_extra = lights.shadow_extra;
+    params
+}
+
 fn project_direction_to_screen(
     viewproj: Mat4,
     camera_position: Vec3,
@@ -183,6 +245,32 @@ fn projected_solar_radius(viewproj: Mat4, camera_position: Vec3, to_sun: Vec3) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn froxel_lighting_bridge_preserves_authoritative_world_light_packet() {
+        let mut lights = newengine_render_feature_api::PackedLights::default();
+        lights.point_count_pad[0] = 1.0;
+        lights.point_pos_range[0] = [1.0, 2.0, 3.0, 8.0];
+        lights.point_color_intensity[0] = [0.8, 0.6, 0.4, 12.0];
+        lights.spot_count_pad[0] = 1.0;
+        lights.spot_pos_range[0] = [4.0, 5.0, 6.0, 18.0];
+        lights.spot_dir_outer_cos[0] = [0.0, -1.0, 0.0, 0.7];
+        lights.spot_color_intensity[0] = [0.2, 0.4, 1.0, 7.0];
+        lights.spot_inner_cos[0] = 0.9;
+        lights.shadow_params = [1.0, 0.001, 0.75, 1.0];
+        lights.shadow_extra = [0.0, 4.0, 0.0, 180.0];
+        lights.shadow_cascade_splits = [12.0, 36.0, 84.0, 180.0];
+
+        let params = apply_froxel_lighting(PostFxFrameParams::default(), lights);
+        let fog = params.froxel_fog.lighting;
+        assert_eq!(fog.point_count, 1);
+        assert_eq!(fog.point_pos_range[0], [1.0, 2.0, 3.0, 8.0]);
+        assert_eq!(fog.spot_count, 1);
+        assert_eq!(fog.spot_inner_cos[0], 0.9);
+        assert!(fog.csm_enabled);
+        assert_eq!(fog.csm_cascade_count, 4);
+        assert_eq!(fog.csm_splits, [12.0, 36.0, 84.0, 180.0]);
+    }
 
     #[test]
     fn projected_solar_radius_is_positive_and_small() {

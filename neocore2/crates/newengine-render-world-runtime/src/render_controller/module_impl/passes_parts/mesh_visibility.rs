@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 /// Runtime draw budgets keep the current non-instanced backend path stable.
 /// They are intentionally deterministic: nearest objects win, ties are stable-key ordered.
-pub(super) const RUNTIME_OPAQUE_PRIMITIVE_BUDGET: usize = 4096;
+pub(super) const RUNTIME_OPAQUE_PRIMITIVE_BUDGET: usize = 16 * 1024;
 pub(super) const RUNTIME_SHADOW_PRIMITIVE_BUDGET: usize = 48;
 pub(super) const EDITOR_OPAQUE_PRIMITIVE_BUDGET: usize = 4096;
 pub(super) const EDITOR_SHADOW_PRIMITIVE_BUDGET: usize = 160;
@@ -582,7 +582,7 @@ mod startup_lod_scale_tests {
 
     #[test]
     fn runtime_opaque_budget_covers_dense_authored_worlds() {
-        assert!(super::RUNTIME_OPAQUE_PRIMITIVE_BUDGET >= 4096);
+        assert!(super::RUNTIME_OPAQUE_PRIMITIVE_BUDGET >= 16 * 1024);
     }
 
     #[test]

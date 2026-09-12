@@ -56,6 +56,7 @@ pub(crate) fn build_consumer_packets(
             moon_color_linear: moon.color_linear,
             moon_intensity_hint: lighting.moon_lux_hint,
             fog_density: atmosphere.fog_density,
+            fog_height_falloff: atmosphere.fog_height_falloff,
             fog_color_linear: atmosphere.fog_color_linear,
             cloud_coverage: clouds.coverage,
             cloud_shadow_strength: clouds.shadow_strength,

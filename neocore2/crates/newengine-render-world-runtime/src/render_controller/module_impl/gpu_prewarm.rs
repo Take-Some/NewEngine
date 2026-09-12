@@ -10,7 +10,7 @@ use newengine_procedural_noise::ProceduralTerrain;
 use newengine_scene::Scene;
 use std::collections::BTreeSet;
 
-use super::super::gpu::{ensure_primitive_gpu, upload_primitive_mesh};
+use super::super::gpu::upload_primitive_mesh;
 use super::RuntimeRenderController;
 
 impl RuntimeRenderController {
@@ -18,6 +18,9 @@ impl RuntimeRenderController {
     /// native buffers through the renderer's frame-completion lifetime queue. Active ECS/model
     /// references win over stale eviction requests, so a cell that re-enters before this drain
     /// cannot lose a mesh still needed by the current frame.
+    ///
+    /// Geometry-arena handles are invalidated in the same transaction, but their shared page
+    /// ranges are not reusable until the backend reports the owning frame completed.
     fn drain_primitive_gpu_evictions(&mut self, scene: &Scene) -> usize {
         let world = scene.world();
         let Some(queue) = world.resource::<PrimitiveGpuEvictionQueue>() else {
@@ -55,28 +58,41 @@ impl RuntimeRenderController {
             if active.contains(&id) {
                 continue;
             }
-            let Some(gpu) = self.gpu.meshes.prim_cache.remove(&id) else {
-                continue;
+
+            let arena_retired = self
+                .gpu
+                .geometry
+                .retire_primitive(id, self.frame.frame_index);
+            let legacy_retired = if let Some(gpu) = self.gpu.meshes.prim_cache.remove(&id) {
+                self.gpu
+                    .lifetimes
+                    .resources
+                    .retire_buffer_after_frame(gpu.vb, self.frame.frame_index);
+                self.gpu
+                    .lifetimes
+                    .resources
+                    .retire_buffer_after_frame(gpu.ib, self.frame.frame_index);
+                true
+            } else {
+                false
             };
-            self.gpu
-                .lifetimes
-                .resources
-                .retire_buffer_after_frame(gpu.vb, self.frame.frame_index);
-            self.gpu
-                .lifetimes
-                .resources
-                .retire_buffer_after_frame(gpu.ib, self.frame.frame_index);
-            evicted = evicted.saturating_add(1);
+
+            if arena_retired || legacy_retired {
+                evicted = evicted.saturating_add(1);
+            }
         }
         if evicted > 0 {
             self.invalidate_shadow_cache();
             self.invalidate_local_shadow_cache();
+            let geometry = self.gpu.geometry.stats();
             newengine_ulog_api::ulog::debug!(
-                "render residency: primitive gpu evictions frame={} evicted={} active={} cache_remaining={} policy='frame-completion deferred buffer retirement'",
+                "render residency: primitive gpu evictions frame={} evicted={} active={} cache_remaining={} geometry_resident={} geometry_retired={} policy='legacy buffers deferred; arena handles generation-invalidated; arena ranges frame-completion reclaimed'",
                 self.frame.frame_index,
                 evicted,
                 active.len(),
                 self.gpu.meshes.prim_cache.len(),
+                geometry.resident_slots,
+                geometry.retired_slots,
             );
         }
         evicted
@@ -238,16 +254,29 @@ impl RuntimeRenderController {
                 {
                     break;
                 }
-                if self.gpu.meshes.prim_cache.contains_key(&primitive_id) {
+
+                let legacy_ready = self.gpu.meshes.prim_cache.contains_key(&primitive_id);
+                let arena_ready = !self.gpu.geometry.is_enabled()
+                    || self.gpu.geometry.handle_for(primitive_id).is_some();
+                if legacy_ready && arena_ready {
                     continue;
                 }
+
                 let started = std::time::Instant::now();
-                let _ = ensure_primitive_gpu(
-                    &registry,
-                    primitive_id,
-                    &mut self.gpu.meshes.prim_cache,
-                    r,
-                )?;
+                let mesh = registry
+                    .build_mesh(primitive_id)
+                    .map_err(|error| newengine_core::EngineError::other(error.to_string()))?;
+                if !legacy_ready {
+                    let gpu = upload_primitive_mesh(r, &mesh, "game_prim")?;
+                    self.gpu.meshes.prim_cache.insert(primitive_id, gpu);
+                }
+                if !arena_ready {
+                    let _ = self
+                        .gpu
+                        .geometry
+                        .ensure_primitive_fail_open(r, primitive_id, &mesh);
+                }
+
                 let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
                 primitive_uploaded = primitive_uploaded.saturating_add(1);
                 if elapsed_ms >= primitive_gpu_upload_warn_ms() {
@@ -260,10 +289,12 @@ impl RuntimeRenderController {
                     );
                 } else if newengine_ulog_api::ulog::trace_enabled() {
                     newengine_ulog_api::ulog::trace!(
-                        "render residency: primitive gpu upload frame={} primitive={:?} elapsed_ms={:.2}",
+                        "render residency: primitive gpu upload frame={} primitive={:?} elapsed_ms={:.2} legacy_ready_before={} arena_ready_before={}",
                         self.frame.frame_index,
                         primitive_id,
                         elapsed_ms,
+                        legacy_ready,
+                        arena_ready,
                     );
                 }
             }
@@ -273,8 +304,9 @@ impl RuntimeRenderController {
             .saturating_add(terrain_uploaded)
             .saturating_add(primitive_uploaded);
         if total_uploaded > 0 && newengine_ulog_api::ulog::trace_enabled() {
+            let geometry = self.gpu.geometry.stats();
             newengine_ulog_api::ulog::trace!(
-                "render residency: bounded gpu uploads frame={} models={} terrain={} primitives={} model_budget={} terrain_budget={} primitive_budget={}",
+                "render residency: bounded gpu uploads frame={} models={} terrain={} primitives={} model_budget={} terrain_budget={} primitive_budget={} geometry_pages={} geometry_resident={} geometry_retired={} geometry_vertex_used_bytes={} geometry_index_used_bytes={}",
                 self.frame.frame_index,
                 model_uploaded,
                 terrain_uploaded,
@@ -282,6 +314,11 @@ impl RuntimeRenderController {
                 newengine_runtime_policy::streaming_policy().model_gpu_uploads_per_frame,
                 terrain_budget,
                 primitive_budget,
+                geometry.pages,
+                geometry.resident_slots,
+                geometry.retired_slots,
+                geometry.vertex_capacity_bytes.saturating_sub(geometry.vertex_free_bytes),
+                geometry.index_capacity_bytes.saturating_sub(geometry.index_free_bytes),
             );
         }
         Ok(total_uploaded)

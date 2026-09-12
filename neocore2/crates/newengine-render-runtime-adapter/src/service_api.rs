@@ -4,7 +4,7 @@ use newengine_core::render::{
     BeginFrameDesc, BeginRenderTargetDesc, BindGroupDesc, BindGroupId, BindGroupLayoutDesc,
     BindGroupLayoutId, BufferDesc, BufferId, BufferSlice, ComputePipelineDesc, DispatchArgs,
     DrawArgs, DrawIndexedArgs, DrawIndexedIndirectArgs, DrawIndexedIndirectCountArgs,
-    GpuVisibilityIndirectCullArgs, IndexFormat, PipelineDesc, PipelineId, PipelineWarmupDesc,
+    GpuVisibilityIndirectCompactArgsV2, GpuVisibilityIndirectCullArgs, IndexFormat, PipelineDesc, PipelineId, PipelineWarmupDesc,
     PipelineWarmupReport, RectI32, RenderApi, RenderBackendEvent, RenderDiagnosticsSnapshot,
     RenderDrawListKind, RenderFrameEnvelope, RenderGraphCompileReport, RenderGraphDesc,
     RenderGraphPassKind, RenderGraphSubmitReport, RenderGraphValidationReport, RenderTargetDesc,
@@ -341,6 +341,13 @@ impl RenderApi for ServiceBackedRenderApi {
         args: GpuVisibilityIndirectCullArgs,
     ) -> EngineResult<()> {
         self.queue_unit(RenderCommand::DispatchVisibilityIndirectCull(args))
+    }
+
+    fn dispatch_visibility_indirect_compact_v2(
+        &mut self,
+        args: GpuVisibilityIndirectCompactArgsV2,
+    ) -> EngineResult<()> {
+        self.queue_unit(RenderCommand::DispatchVisibilityIndirectCompactV2(args))
     }
 
     fn dispatch(&mut self, args: DispatchArgs) -> EngineResult<()> {

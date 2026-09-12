@@ -85,6 +85,53 @@ fn default_ssao_quality_steps() -> u32 {
     16
 }
 
+/// Screen-space reflection controls for the raster/deferred reflection tier.
+/// RT reflections are a separate capability and must not silently alias this contract.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScreenSpaceReflectionParams {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ssr_intensity")]
+    pub intensity: f32,
+    #[serde(default = "default_ssr_max_distance")]
+    pub max_distance_m: f32,
+    #[serde(default = "default_ssr_thickness")]
+    pub thickness_m: f32,
+    #[serde(default = "default_ssr_stride")]
+    pub stride_m: f32,
+    #[serde(default = "default_ssr_roughness_cutoff")]
+    pub roughness_cutoff: f32,
+    #[serde(default = "default_ssr_max_steps")]
+    pub max_steps: u32,
+}
+
+impl Default for ScreenSpaceReflectionParams {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            intensity: default_ssr_intensity(),
+            max_distance_m: default_ssr_max_distance(),
+            thickness_m: default_ssr_thickness(),
+            stride_m: default_ssr_stride(),
+            roughness_cutoff: default_ssr_roughness_cutoff(),
+            max_steps: default_ssr_max_steps(),
+        }
+    }
+}
+
+#[inline]
+fn default_ssr_intensity() -> f32 { 0.55 }
+#[inline]
+fn default_ssr_max_distance() -> f32 { 48.0 }
+#[inline]
+fn default_ssr_thickness() -> f32 { 0.22 }
+#[inline]
+fn default_ssr_stride() -> f32 { 0.55 }
+#[inline]
+fn default_ssr_roughness_cutoff() -> f32 { 0.68 }
+#[inline]
+fn default_ssr_max_steps() -> u32 { 56 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PostFxQualityParams {
     #[serde(default)]
@@ -97,6 +144,8 @@ pub struct PostFxQualityParams {
     pub ssao: SsaoParams,
     #[serde(default)]
     pub contact_shadows: ContactShadowParams,
+    #[serde(default)]
+    pub ssr: ScreenSpaceReflectionParams,
     #[serde(default)]
     pub color: ColorGradeParams,
     #[serde(default)]
@@ -112,6 +161,7 @@ impl Default for PostFxQualityParams {
             taa: TaaParams::default(),
             ssao: SsaoParams::default(),
             contact_shadows: ContactShadowParams::default(),
+            ssr: ScreenSpaceReflectionParams::default(),
             color: ColorGradeParams::default(),
             anti_aliasing: AntiAliasingMode::Fxaa,
         }

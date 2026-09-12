@@ -127,6 +127,11 @@ impl FrameGraphBuilder {
                 StandardRenderPhase::ParticleComposite => self.particle_composite(),
                 StandardRenderPhase::Transparent => self.transparent(),
                 StandardRenderPhase::Water => self.water(),
+                StandardRenderPhase::FroxelFog => self.froxel_fog(
+                    params.froxel_tile_size_px,
+                    params.froxel_depth_slices,
+                ),
+                StandardRenderPhase::ScreenSpaceReflections => self.screen_space_reflections(),
                 StandardRenderPhase::PostFx => self.postfx(true),
                 StandardRenderPhase::BloomExtract => self.bloom_extract(),
                 StandardRenderPhase::BloomBlur => self.bloom_blur(),

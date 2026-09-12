@@ -8,5 +8,5 @@ pub(super) mod mesh_visibility;
 pub(super) use self::mesh_passes::{
     draw_asset_preview_bundle, draw_primitives, draw_primitives_gbuffer, draw_primitives_shadow,
     draw_procedural_terrain, draw_procedural_terrain_gbuffer, draw_procedural_terrain_shadow,
-    publish_camera_spawn, ShadowUboViewKey,
+    publish_camera_spawn, shadow_caster_projected_radius_visible, ShadowUboViewKey,
 };

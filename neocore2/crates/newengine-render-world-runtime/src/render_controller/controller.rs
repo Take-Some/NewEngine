@@ -16,7 +16,7 @@ use super::state::{
     RenderShadowRuntimeState, RenderUiSurfaceRuntimeState, RenderViewportState,
 };
 use newengine_core::render::{
-    RenderBackendCapabilities, RenderBackendStatus, RenderExecutionCapabilities,
+    RenderBackendCapabilities, RenderBackendStatus, RenderExecutionCapabilities, RenderFeature,
 };
 use newengine_render_feature_api::{LightExtractionProvider, RenderDrawListProvider};
 
@@ -114,6 +114,7 @@ pub struct RuntimeRenderController {
     pub(super) runtime_profile: RenderRuntimeProfileState,
     pub(super) backend_failure: RenderBackendFailureState,
     pub(super) backend_execution: RenderExecutionCapabilities,
+    pub(super) backend_gpu_driven_ready: bool,
     pub(super) app_policy: RenderRuntimeAppPolicy,
     pub(super) editor_viewport: newengine_editor_viewport_runtime::EditorViewportController,
     pub(super) editor_viewport_scene:
@@ -146,9 +147,36 @@ impl RuntimeRenderController {
             .apply_hardware_tier_once(capabilities.hardware_tier);
         self.gpu.hair.apply_backend_capabilities(capabilities);
         self.backend_execution = capabilities.execution;
+        self.backend_gpu_driven_ready = capabilities.supports(RenderFeature::StorageBuffers)
+            && capabilities.supports(RenderFeature::HiZOcclusion)
+            && capabilities.supports(RenderFeature::IndirectDraws)
+            && capabilities.supports(RenderFeature::MultiDrawIndirect)
+            && capabilities.supports(RenderFeature::IndirectDrawCount)
+            && capabilities.supports(RenderFeature::VisibilityIndirectCompaction);
     }
 
-    pub(crate) fn backend_status_snapshot(&self) -> RenderBackendStatus {
+    #[inline]
+    pub(in crate::render_controller) fn gpu_driven_backend_ready(&self) -> bool {
+        self.backend_gpu_driven_ready
+    }
+
+        #[inline]
+    pub(in crate::render_controller) fn gpu_indirect_gbuffer_ready(&self) -> bool {
+        newengine_runtime_env::var_bool("NEWENGINE_GPU_DRIVEN_INDIRECT_ENABLE", false)
+            && self.backend_gpu_driven_ready
+            && self
+                .gpu
+                .table_buffers
+                .is_some_and(|buffers| buffers.frame_index == self.frame.frame_index)
+            && self
+                .gpu
+                .indirect_stream
+                .current()
+                .is_some_and(|stream| {
+                    stream.frame_index == self.frame.frame_index && stream.migration_ready()
+                })
+    }
+pub(crate) fn backend_status_snapshot(&self) -> RenderBackendStatus {
         self.backend_failure.snapshot()
     }
 
@@ -364,6 +392,7 @@ impl RuntimeRenderController {
             runtime_profile: RenderRuntimeProfileState::new(),
             backend_failure: RenderBackendFailureState::new(),
             backend_execution: RenderExecutionCapabilities::default(),
+            backend_gpu_driven_ready: false,
             app_policy: RenderRuntimeAppPolicy::from_startup_config(),
             editor_viewport: newengine_editor_viewport_runtime::EditorViewportController::default(),
             editor_viewport_scene:

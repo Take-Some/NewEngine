@@ -40,7 +40,7 @@ impl ShadowUboViewKey {
 }
 
 #[inline]
-fn shadow_caster_projected_radius_visible(
+pub(in crate::render_controller::module_impl) fn shadow_caster_projected_radius_visible(
     cascade_index: usize,
     cascade_texel_world_size: f32,
     radius_ws: f32,

@@ -81,6 +81,9 @@ pub(super) fn render_graph_pass_kind_tag(kind: RenderGraphPassKind) -> u8 {
         RenderGraphPassKind::ParticleComposite => 24,
         RenderGraphPassKind::Transparent => 8,
         RenderGraphPassKind::Water => 9,
+        // Append-only tag: keep all historical binary pass tags stable.
+        RenderGraphPassKind::ScreenSpaceReflections => 26,
+        RenderGraphPassKind::FroxelFog => 27,
         RenderGraphPassKind::PostFx => 10,
         RenderGraphPassKind::BloomExtract => 11,
         RenderGraphPassKind::BloomBlur => 12,
@@ -112,6 +115,8 @@ pub(super) fn render_graph_pass_kind_from_tag(tag: u8) -> Result<RenderGraphPass
         24 => Ok(RenderGraphPassKind::ParticleComposite),
         8 => Ok(RenderGraphPassKind::Transparent),
         9 => Ok(RenderGraphPassKind::Water),
+        26 => Ok(RenderGraphPassKind::ScreenSpaceReflections),
+        27 => Ok(RenderGraphPassKind::FroxelFog),
         10 => Ok(RenderGraphPassKind::PostFx),
         11 => Ok(RenderGraphPassKind::BloomExtract),
         12 => Ok(RenderGraphPassKind::BloomBlur),

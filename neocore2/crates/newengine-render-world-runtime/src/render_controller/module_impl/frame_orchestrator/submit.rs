@@ -176,6 +176,8 @@ impl RenderFrameOrchestrator {
             );
         }
         cpu_profile.mark("gpu_residency");
+        controller.prepare_gpu_scene_tables(r, scene, runtime);
+        cpu_profile.mark("gpu_scene_tables");
 
         let camera_position = [
             snapshot.camera_position.x,
@@ -316,21 +318,48 @@ impl RenderFrameOrchestrator {
         }
         cpu_profile.mark("feature_extract");
 
-        let shadow_rt_for_graph = if render_shadow_map {
-            shadow_plan.render_target()
-        } else {
-            None
-        };
+        // Keep the persistent CSM atlas visible to the graph even on cache-hit frames.
+        // `shadow_enabled` below still controls whether a writer pass executes this frame.
+        let shadow_rt_for_graph = shadow_plan.render_target();
         let draw_list_descs = features.draw_list_descs().to_vec();
         let ui_backdrop = controller.ui.primary.ui_backdrop_postfx();
         let ui_enabled = scope.ui_enabled || !ui_layers.is_empty();
         let hair_enabled = controller.gpu.hair.scene_ready(scene.world());
+        // Build the backend-facing postFX intent before the graph so expensive side
+        // chains can be omitted structurally when the authored effect is disabled.
+        let mut postfx = apply_engine_view_postfx(
+            postfx::game_sun_postfx_params(scene.world(), viewproj, view.position_ws),
+            view_frame.postfx,
+        );
+        postfx = postfx::apply_froxel_lighting(postfx, world_lights);
+        postfx.ui_backdrop = ui_backdrop;
+        let bloom_enabled = postfx_enabled
+            && postfx.quality.bloom.enabled
+            && postfx.quality.bloom.intensity > 1.0e-4;
+        let ssr_enabled = deferred_enabled
+            && postfx_enabled
+            && postfx.quality.ssr.enabled
+            && postfx.quality.ssr.intensity > 1.0e-4;
+        let froxel_fog_enabled = postfx_enabled
+            && postfx.froxel_fog.enabled
+            && postfx.fog.enabled
+            && postfx.fog.density > 1.0e-7;
+        let frame_camera = newengine_core::render::FrameCameraContext {
+            position_ws: view_frame.camera_snapshot.position_ws,
+            forward_ws: view_frame.camera_snapshot.forward_ws,
+            up_ws: view_frame.camera_snapshot.up_ws,
+            fov_y: view_frame.camera_snapshot.projection.fovy,
+            near: view_frame.camera_snapshot.projection.near,
+            far: view_frame.camera_snapshot.projection.far,
+        };
+        let gpu_indirect_gbuffer_ready = deferred_enabled && controller.gpu_indirect_gbuffer_ready();
         let frame_plan = standard_runtime_frame(
             StandardRuntimePipelineDesc::new(
                 controller.frame.frame_index,
                 Extent2D::new(scope.w, scope.h),
                 extent,
             )
+            .camera(frame_camera)
             .viewport_is_surface(scope.direct_surface_viewport)
             .viewport_render_target(rt)
             .shadow(
@@ -349,9 +378,17 @@ impl RenderFrameOrchestrator {
                 local_shadow_frame.atlas_extent,
             )
             .deferred(deferred_enabled)
+            .visibility_cull(gpu_indirect_gbuffer_ready)
             .hdr_scene(hdr_scene_enabled)
             .hair(hair_enabled)
             .postfx(postfx_enabled)
+            .bloom(bloom_enabled)
+            .froxel_fog(
+                froxel_fog_enabled,
+                postfx.froxel_fog.tile_size_px,
+                postfx.froxel_fog.depth_slices,
+            )
+            .screen_space_reflections(ssr_enabled)
             .ui(ui_enabled)
             .ui_layers(ui_layers.packets.iter().map(|packet| packet.domain))
             .ui_backdrop_blur(
@@ -362,6 +399,34 @@ impl RenderFrameOrchestrator {
         );
 
         features.validate_routes(&frame_plan.validate_draw_list_routes())?;
+        if gpu_indirect_gbuffer_ready {
+            match controller.record_gpu_indirect_gbuffer(
+                r,
+                lit,
+                viewproj,
+                &extraction.lights,
+                extraction.shadow_frame.texture,
+                extraction.local_shadow_frame.texture,
+                extraction.viewport_extent,
+            ) {
+                Ok(recorded) => {
+                    if scope.trace_frame {
+                        newengine_ulog_api::ulog::debug!(
+                            "render gpu indirect gbuffer: frame={} gpu_indirect_gbuffer_recorded={}",
+                            controller.frame.frame_index,
+                            recorded,
+                        );
+                    }
+                }
+                Err(error) => {
+                    newengine_ulog_api::ulog::warn!(
+                        "render gpu indirect gbuffer: frame={} record failed; legacy GBuffer remains authoritative err='{}'",
+                        controller.frame.frame_index,
+                        error,
+                    );
+                }
+            }
+        }
         {
             let mut build_ctx = DrawListBuildCtx::new(controller, r, features.draw_lists());
             features.extract_external_providers(&extraction, &frame_plan, &mut build_ctx)?;
@@ -376,16 +441,13 @@ impl RenderFrameOrchestrator {
             scope,
             hair_enabled,
             shadows_enabled && render_shadow_map,
+            frame_camera,
+            &frame_plan,
         );
         // UI domain draw streams travel inside RenderFrameEnvelope.ui_layers.
         // No renderer state is mutated out-of-band before graph submission.
         cpu_profile.mark("frame_plan_external");
 
-        let mut postfx = apply_engine_view_postfx(
-            postfx::game_sun_postfx_params(scene.world(), viewproj, view.position_ws),
-            view_frame.postfx,
-        );
-        postfx.ui_backdrop = ui_backdrop;
         Self::publish_render_task_pass_event(
             controller.frame.frame_index,
             newengine_task_api::task_pass::FRAME_ENVELOPE,

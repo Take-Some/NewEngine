@@ -83,6 +83,19 @@ impl StartupLaunchSettings {
             ENV_SSAO_HALF_RESOLUTION,
             bool_text(value.graphics.ssao_half_resolution),
         );
+        set_env(ENV_SSR_ENABLED, bool_text(value.graphics.ssr_enabled));
+        set_env(ENV_SSR_INTENSITY, value.graphics.ssr_intensity.to_string());
+        set_env(ENV_SSR_MAX_DISTANCE_METERS, value.graphics.ssr_max_distance_m.to_string());
+        set_env(ENV_SSR_THICKNESS_METERS, value.graphics.ssr_thickness_m.to_string());
+        set_env(ENV_SSR_STRIDE_METERS, value.graphics.ssr_stride_m.to_string());
+        set_env(ENV_SSR_ROUGHNESS_CUTOFF, value.graphics.ssr_roughness_cutoff.to_string());
+        set_env(ENV_SSR_MAX_STEPS, value.graphics.ssr_max_steps.to_string());
+        set_env(ENV_VOLUMETRIC_FOG_ENABLED, bool_text(value.graphics.volumetric_fog_enabled));
+        set_env(ENV_FROXEL_TILE_SIZE_PX, value.graphics.froxel_tile_size_px.to_string());
+        set_env(ENV_FROXEL_DEPTH_SLICES, value.graphics.froxel_depth_slices.to_string());
+        set_env(ENV_FROXEL_MAX_DISTANCE_METERS, value.graphics.froxel_max_distance_m.to_string());
+        set_env(ENV_FROXEL_TEMPORAL_FEEDBACK, value.graphics.froxel_temporal_feedback.to_string());
+        set_env(ENV_FROXEL_ANISOTROPY, value.graphics.froxel_anisotropy.to_string());
         set_env(ENV_BLOOM_ENABLED, bool_text(value.graphics.bloom_enabled));
         set_env(
             ENV_BLOOM_THRESHOLD,
@@ -182,6 +195,30 @@ impl StartupLaunchSettings {
         );
         set_env(ENV_TEXTURE_QUALITY, value.graphics.texture_quality.as_str());
         set_env(ENV_ANISOTROPY, value.graphics.anisotropy.to_string());
+        set_env(
+            ENV_GPU_SCENE_TABLES_ENABLE,
+            bool_text(value.graphics.gpu_scene_tables_enabled),
+        );
+        set_env(
+            ENV_GPU_DRIVEN_INDIRECT_ENABLE,
+            bool_text(value.graphics.gpu_driven_indirect_enabled),
+        );
+        set_env(
+            ENV_GPU_DRIVEN_SHADOW_INDIRECT_ENABLE,
+            bool_text(value.graphics.gpu_driven_shadow_indirect_enabled),
+        );
+        set_env(
+            ENV_GEOMETRY_ARENA_VERTEX_PAGE_MIB,
+            value.graphics.geometry_arena_vertex_page_mib.to_string(),
+        );
+        set_env(
+            ENV_GEOMETRY_ARENA_INDEX_PAGE_MIB,
+            value.graphics.geometry_arena_index_page_mib.to_string(),
+        );
+        set_env(
+            ENV_GEOMETRY_ARENA_MAX_PAGES,
+            value.graphics.geometry_arena_max_pages.to_string(),
+        );
         set_env(ENV_WINDOW_MODE, value.display.window_mode.as_str());
         set_env(ENV_VSYNC, bool_text(value.display.vsync));
         set_env(

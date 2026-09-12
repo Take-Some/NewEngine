@@ -55,6 +55,75 @@ impl Default for FrameCameraContext {
 }
 
 impl FrameCameraContext {
+    /// Returns a finite normalized camera contract suitable for renderer-side
+    /// reconstruction. Producers may be external providers, so native backends
+    /// must never assume forward/up/FOV/clip values are already well formed.
+    #[inline]
+    pub fn sanitized(self) -> Self {
+        fn normalized(v: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+            let len_sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+            if !len_sq.is_finite() || len_sq <= 1.0e-8 {
+                return fallback;
+            }
+            let inv = len_sq.sqrt().recip();
+            [v[0] * inv, v[1] * inv, v[2] * inv]
+        }
+
+        let defaults = Self::default();
+        let position_ws = self.position_ws.map(|component| {
+            if component.is_finite() {
+                component
+            } else {
+                0.0
+            }
+        });
+        let forward_ws = normalized(self.forward_ws, defaults.forward_ws);
+        let mut up_ws = normalized(self.up_ws, defaults.up_ws);
+        let mut dot =
+            forward_ws[0] * up_ws[0] + forward_ws[1] * up_ws[1] + forward_ws[2] * up_ws[2];
+        if dot.abs() > 0.999 {
+            // World Y is also parallel when looking straight up/down. Choose
+            // an independent axis before Gram-Schmidt so camera rays stay finite.
+            up_ws = if forward_ws[1].abs() < 0.9 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            dot = forward_ws[0] * up_ws[0] + forward_ws[1] * up_ws[1] + forward_ws[2] * up_ws[2];
+        }
+        let up_ws = normalized(
+            [
+                up_ws[0] - forward_ws[0] * dot,
+                up_ws[1] - forward_ws[1] * dot,
+                up_ws[2] - forward_ws[2] * dot,
+            ],
+            defaults.up_ws,
+        );
+        let fov_y = if self.fov_y.is_finite() {
+            self.fov_y.clamp(0.05, 3.05)
+        } else {
+            defaults.fov_y
+        };
+        let near = if self.near.is_finite() {
+            self.near.max(0.0001)
+        } else {
+            defaults.near
+        };
+        let far = if self.far.is_finite() {
+            self.far.max(near + 0.001)
+        } else {
+            defaults.far.max(near + 0.001)
+        };
+        Self {
+            position_ws,
+            forward_ws,
+            up_ws,
+            fov_y,
+            near,
+            far,
+        }
+    }
+
     #[inline]
     pub fn shadow_cache_bucket_hash(self) -> u32 {
         const POS_STEP_METERS: f32 = 0.5;
@@ -107,6 +176,49 @@ impl FrameCameraContext {
             mix(&mut hash, value);
         }
         hash
+    }
+}
+
+#[cfg(test)]
+mod frame_camera_context_tests {
+    use super::*;
+
+    #[test]
+    fn sanitizer_preserves_a_finite_orthonormal_basis_at_camera_poles() {
+        for forward_ws in [[0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.8, -0.6]] {
+            for up_ws in [[0.0, 1.0, 0.0], forward_ws, [0.0, 0.0, 0.0]] {
+                let camera = FrameCameraContext {
+                    forward_ws,
+                    up_ws,
+                    ..Default::default()
+                }
+                .sanitized();
+                let f = camera.forward_ws;
+                let u = camera.up_ws;
+                assert!(f.iter().chain(u.iter()).all(|v| v.is_finite()));
+                assert!((f[0] * u[0] + f[1] * u[1] + f[2] * u[2]).abs() < 1.0e-6);
+                assert!((u[0] * u[0] + u[1] * u[1] + u[2] * u[2] - 1.0).abs() < 1.0e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn sanitizer_normalizes_vectors_and_repairs_invalid_clip_range() {
+        let camera = FrameCameraContext {
+            position_ws: [f32::NAN, 2.0, 3.0],
+            forward_ws: [0.0, 0.0, -5.0],
+            up_ws: [0.0, 10.0, 0.0],
+            fov_y: f32::INFINITY,
+            near: -1.0,
+            far: 0.0,
+        }
+        .sanitized();
+        assert_eq!(camera.position_ws, [0.0, 2.0, 3.0]);
+        assert!((camera.forward_ws[2] + 1.0).abs() < 1.0e-6);
+        assert!((camera.up_ws[1] - 1.0).abs() < 1.0e-6);
+        assert!(camera.near > 0.0);
+        assert!(camera.far > camera.near);
+        assert!(camera.fov_y.is_finite());
     }
 }
 

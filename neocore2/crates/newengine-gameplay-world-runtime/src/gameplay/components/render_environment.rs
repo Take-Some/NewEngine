@@ -16,6 +16,34 @@ pub struct WorldClearColor {
     pub color: [f32; 4],
 }
 
+/// Environment-owned atmospheric fog intent consumed by render orchestration.
+/// This is deliberately separate from display grading: fog participates in scene
+/// radiance before lens/tonemap and will later feed the graph-level froxel path.
+#[derive(Clone, Copy, Debug)]
+pub struct EnvironmentFogRenderState {
+    pub enabled: bool,
+    pub density: f32,
+    pub height_falloff: f32,
+    pub color_linear: [f32; 3],
+    pub base_height_m: f32,
+    pub start_distance_m: f32,
+    pub max_opacity: f32,
+}
+
+impl Default for EnvironmentFogRenderState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            density: 0.0,
+            height_falloff: 0.12,
+            color_linear: [0.45, 0.50, 0.58],
+            base_height_m: 0.0,
+            start_distance_m: 2.0,
+            max_opacity: 0.94,
+        }
+    }
+}
+
 /// Environment-driven display/post-FX intent. The render backend still owns the
 /// concrete implementation, adaptation history and display encoding.
 #[derive(Clone, Copy, Debug)]

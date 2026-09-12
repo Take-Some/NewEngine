@@ -8,8 +8,16 @@ pub struct RuntimeFrameFeatureSet {
     pub local_shadows: bool,
     pub deferred: bool,
     #[serde(default)]
+    pub visibility_cull: bool,
+    #[serde(default)]
     pub hair: bool,
     pub postfx: bool,
+    #[serde(default)]
+    pub bloom: bool,
+    #[serde(default)]
+    pub screen_space_reflections: bool,
+    #[serde(default)]
+    pub froxel_fog: bool,
     pub ui_composite: bool,
     pub ui_backdrop_blur: bool,
     pub debug_overlay: bool,
@@ -27,8 +35,12 @@ impl RuntimeFrameFeatureSet {
             shadows,
             local_shadows: false,
             deferred: false,
+            visibility_cull: false,
             hair: false,
             postfx,
+            bloom: postfx,
+            screen_space_reflections: false,
+            froxel_fog: false,
             ui_composite,
             ui_backdrop_blur: false,
             debug_overlay,
@@ -46,8 +58,12 @@ impl RuntimeFrameFeatureSet {
             shadows,
             local_shadows: false,
             deferred: true,
+            visibility_cull: false,
             hair: false,
             postfx,
+            bloom: postfx,
+            screen_space_reflections: false,
+            froxel_fog: false,
             ui_composite,
             ui_backdrop_blur: false,
             debug_overlay,
@@ -66,8 +82,32 @@ impl RuntimeFrameFeatureSet {
     }
 
     #[inline]
+    pub const fn with_visibility_cull(mut self, enabled: bool) -> Self {
+        self.visibility_cull = enabled;
+        self
+    }
+
+    #[inline]
     pub const fn with_hair(mut self, enabled: bool) -> Self {
         self.hair = enabled;
+        self
+    }
+
+    #[inline]
+    pub const fn with_bloom(mut self, enabled: bool) -> Self {
+        self.bloom = enabled;
+        self
+    }
+
+    #[inline]
+    pub const fn with_screen_space_reflections(mut self, enabled: bool) -> Self {
+        self.screen_space_reflections = enabled;
+        self
+    }
+
+    #[inline]
+    pub const fn with_froxel_fog(mut self, enabled: bool) -> Self {
+        self.froxel_fog = enabled;
         self
     }
 }
@@ -110,7 +150,7 @@ impl RenderFrameRecipe {
         features: RuntimeFrameFeatureSet,
         cascaded_shadows: bool,
     ) -> Self {
-        let mut steps = Vec::with_capacity(18);
+        let mut steps = Vec::with_capacity(19);
         steps.push(RenderPhaseRecipeStep::enabled(
             StandardRenderPhase::BeginFrame,
         ));
@@ -142,6 +182,10 @@ impl RenderFrameRecipe {
         // and erase the opaque scene that was just rendered.
         steps.push(RenderPhaseRecipeStep::enabled(
             StandardRenderPhase::ParticleSimulation,
+        ));
+        steps.push(RenderPhaseRecipeStep::optional(
+            StandardRenderPhase::VisibilityCull,
+            features.visibility_cull,
         ));
         // GPU-driven visibility is not part of the unconditional production recipe yet.
         // It must be injected only after backend capability negotiation and synchronized
@@ -177,6 +221,24 @@ impl RenderFrameRecipe {
         ));
         steps.push(RenderPhaseRecipeStep::enabled(
             StandardRenderPhase::Transparent,
+        ));
+        // Volumetric fog is a graph-owned logical 3D volume. The current provider
+        // packs the Z slices into a 2D atlas, but the scheduling contract remains volumetric.
+        steps.push(RenderPhaseRecipeStep::optional(
+            StandardRenderPhase::FroxelFog,
+            features.postfx && features.froxel_fog,
+        ));
+        // SSR is deferred-only and produces a side-signal from the authoritative
+        // GBuffer. Root PostFX composites it before atmosphere/lens/display.
+        steps.push(RenderPhaseRecipeStep::optional(
+            StandardRenderPhase::ScreenSpaceReflections,
+            features.deferred && features.postfx && features.screen_space_reflections,
+        ));
+        // Bloom is a linear-HDR side chain. It must complete before the root PostFX
+        // pass so tonemap can composite its result rather than re-blurring display color.
+        steps.push(RenderPhaseRecipeStep::optional(
+            StandardRenderPhase::BloomExtract,
+            features.postfx && features.bloom,
         ));
         steps.push(RenderPhaseRecipeStep::optional(
             StandardRenderPhase::PostFx,
@@ -218,6 +280,8 @@ impl RenderFrameRecipe {
 pub struct RuntimeRecipeBuildParams {
     pub shadow_resolution: u32,
     pub shadow_cascade_count: u32,
+    pub froxel_tile_size_px: u32,
+    pub froxel_depth_slices: u32,
 }
 
 impl RuntimeRecipeBuildParams {
@@ -226,12 +290,21 @@ impl RuntimeRecipeBuildParams {
         Self {
             shadow_resolution,
             shadow_cascade_count: 1,
+            froxel_tile_size_px: 16,
+            froxel_depth_slices: 64,
         }
     }
 
     #[inline]
     pub const fn with_shadow_cascade_count(mut self, cascade_count: u32) -> Self {
         self.shadow_cascade_count = cascade_count;
+        self
+    }
+
+    #[inline]
+    pub const fn with_froxel_grid(mut self, tile_size_px: u32, depth_slices: u32) -> Self {
+        self.froxel_tile_size_px = tile_size_px;
+        self.froxel_depth_slices = depth_slices;
         self
     }
 }
@@ -299,6 +372,76 @@ mod tests {
             "visibility cull must remain opt-in until the negotiated backend data-plane is deployed"
         );
         assert!(phases.contains(&StandardRenderPhase::ViewportGBuffer));
+    }
+
+    #[test]
+    fn visibility_cull_precedes_gbuffer_when_opted_in() {
+        let recipe = RenderFrameRecipe::standard_runtime(
+            RuntimeFrameFeatureSet::deferred(true, false, false, false)
+                .with_visibility_cull(true),
+        );
+        let phases = recipe.enabled_phases().collect::<Vec<_>>();
+        let particle = phases.iter().position(|phase| *phase == StandardRenderPhase::ParticleSimulation).expect("particle simulation phase");
+        let visibility = phases.iter().position(|phase| *phase == StandardRenderPhase::VisibilityCull).expect("visibility cull phase");
+        let gbuffer = phases.iter().position(|phase| *phase == StandardRenderPhase::ViewportGBuffer).expect("gbuffer phase");
+        assert!(particle < visibility && visibility < gbuffer);
+    }
+
+    #[test]
+    fn froxel_fog_precedes_ssr_bloom_and_root_postfx_when_enabled() {
+        let recipe = RenderFrameRecipe::standard_runtime(
+            RuntimeFrameFeatureSet::deferred(true, true, false, false)
+                .with_froxel_fog(true)
+                .with_screen_space_reflections(true),
+        );
+        let phases = recipe.enabled_phases().collect::<Vec<_>>();
+        let fog = phases
+            .iter()
+            .position(|p| *p == StandardRenderPhase::FroxelFog)
+            .expect("froxel fog phase");
+        let ssr = phases
+            .iter()
+            .position(|p| *p == StandardRenderPhase::ScreenSpaceReflections)
+            .expect("SSR phase");
+        let bloom = phases
+            .iter()
+            .position(|p| *p == StandardRenderPhase::BloomExtract)
+            .expect("bloom phase");
+        let postfx = phases
+            .iter()
+            .position(|p| *p == StandardRenderPhase::PostFx)
+            .expect("root postfx phase");
+        assert!(fog < ssr && ssr < bloom && bloom < postfx);
+    }
+
+    #[test]
+    fn ssr_is_deferred_only_and_precedes_bloom_and_postfx() {
+        let deferred = RenderFrameRecipe::standard_runtime(
+            RuntimeFrameFeatureSet::deferred(true, true, false, false)
+                .with_screen_space_reflections(true),
+        );
+        let phases = deferred.enabled_phases().collect::<Vec<_>>();
+        let ssr = phases.iter().position(|p| *p == StandardRenderPhase::ScreenSpaceReflections).unwrap();
+        let bloom = phases.iter().position(|p| *p == StandardRenderPhase::BloomExtract).unwrap();
+        let postfx = phases.iter().position(|p| *p == StandardRenderPhase::PostFx).unwrap();
+        assert!(ssr < bloom && bloom < postfx);
+
+        let forward = RenderFrameRecipe::standard_runtime(
+            RuntimeFrameFeatureSet::forward(true, true, false, false)
+                .with_screen_space_reflections(true),
+        );
+        assert!(!forward.enabled_phases().any(|p| p == StandardRenderPhase::ScreenSpaceReflections));
+    }
+
+    #[test]
+    fn bloom_side_chain_precedes_root_postfx_when_enabled() {
+        let recipe = RenderFrameRecipe::standard_runtime(
+            RuntimeFrameFeatureSet::forward(true, true, false, false).with_bloom(true),
+        );
+        let phases = recipe.enabled_phases().collect::<Vec<_>>();
+        let bloom = phases.iter().position(|p| *p == StandardRenderPhase::BloomExtract).unwrap();
+        let postfx = phases.iter().position(|p| *p == StandardRenderPhase::PostFx).unwrap();
+        assert!(bloom < postfx);
     }
 
     #[test]

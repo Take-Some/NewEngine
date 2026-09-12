@@ -20,7 +20,7 @@ use newengine_gameplay_world_runtime::gameplay::{
 
 use crate::render_controller::gpu::{PlayerSkinGpu, PrimitiveGpu};
 
-use super::{scene, RuntimeRenderController};
+use super::{passes::mesh_visibility::transform_sphere, scene, RuntimeRenderController};
 
 /// Immutable primitive input captured once for all render passes in a frame.
 ///
@@ -93,7 +93,15 @@ pub(super) struct PrimitiveSceneEntry {
     pub(super) foliage_runtime: Option<FoliageInstanceRuntime>,
     pub(super) environment_dome: Option<EnvironmentDomeRenderState>,
     pub(super) local_bounds: Option<(Vec3, f32)>,
+    pub(super) world_bounds: Option<(Vec3, f32)>,
     pub(super) authored_pbr_required: bool,
+}
+
+#[inline]
+fn refresh_primitive_world_bounds(entry: &mut PrimitiveSceneEntry) {
+    entry.world_bounds = entry
+        .local_bounds
+        .map(|(center, radius)| transform_sphere(entry.render_model, center, radius));
 }
 
 impl PrimitiveSceneSnapshot {
@@ -126,6 +134,8 @@ impl PrimitiveSceneSnapshot {
             let local_bounds = world
                 .get::<Bounds>(id)
                 .map(|bounds| (bounds.local_sphere.center, bounds.local_sphere.radius));
+            let world_bounds = local_bounds
+                .map(|(center, radius)| transform_sphere(render_model, center, radius));
 
             let render_owner = world.get::<PlayerVisualPart>(id).map(|part| part.owner);
             entries.push(PrimitiveSceneEntry {
@@ -139,6 +149,7 @@ impl PrimitiveSceneSnapshot {
                 foliage_runtime: world.get::<FoliageInstanceRuntime>(id).copied(),
                 environment_dome: world.get::<EnvironmentDomeRenderState>(id).cloned(),
                 local_bounds,
+                world_bounds,
                 authored_pbr_required,
             });
         }
@@ -238,8 +249,10 @@ impl PrimitiveSceneSnapshot {
         if world.any_changed_since::<Bounds>(since_tick) {
             for (entity, bounds) in world.query_changed::<Bounds>(since_tick) {
                 if let Some(index) = self.entity_index.get(&entity.stable_u64()).copied() {
-                    self.entries[index].local_bounds =
+                    let entry = &mut self.entries[index];
+                    entry.local_bounds =
                         Some((bounds.local_sphere.center, bounds.local_sphere.radius));
+                    refresh_primitive_world_bounds(entry);
                 }
             }
         }
@@ -266,8 +279,9 @@ impl PrimitiveSceneSnapshot {
                 let Some(global) = world.get::<GlobalTransform>(entity) else {
                     return false;
                 };
-                self.entries[index].render_model =
-                    player_render_model_matrix(world, entity, global.0);
+                let entry = &mut self.entries[index];
+                entry.render_model = player_render_model_matrix(world, entity, global.0);
+                refresh_primitive_world_bounds(entry);
             }
         } else if global_changed {
             // More than one propagation happened while this scene was not rendered; the latest
@@ -286,8 +300,9 @@ impl PrimitiveSceneSnapshot {
                     let Some(global) = world.get::<GlobalTransform>(entity) else {
                         return false;
                     };
-                    self.entries[index].render_model =
-                        player_render_model_matrix(world, entity, global.0);
+                    let entry = &mut self.entries[index];
+                    entry.render_model = player_render_model_matrix(world, entity, global.0);
+                    refresh_primitive_world_bounds(entry);
                 }
             }
         }
@@ -347,6 +362,10 @@ mod primitive_scene_snapshot_tests {
         let entity = scene.world_mut().spawn();
         assert!(scene.world_mut().insert(entity, Primitive::default()));
         assert!(scene.world_mut().insert(entity, Transform::default()));
+        assert!(scene.world_mut().insert(
+            entity,
+            Bounds::from_local_sphere(newengine_bounds::Sphere::new(Vec3::ZERO, 2.0)),
+        ));
         propagate_transforms(scene.world_mut());
         let mut snapshot = PrimitiveSceneSnapshot::capture(1, &scene, true);
 
@@ -357,6 +376,9 @@ mod primitive_scene_snapshot_tests {
         assert!(snapshot.refresh_for_frame(2, &scene));
         let world_origin = snapshot.entries[0].render_model.transform_point3(Vec3::ZERO);
         assert!((world_origin - Vec3::new(7.0, 0.0, -2.0)).length() < 1.0e-6);
+        let (bounds_center, bounds_radius) = snapshot.entries[0].world_bounds.unwrap();
+        assert!((bounds_center - world_origin).length() < 1.0e-6);
+        assert!((bounds_radius - 2.0).abs() < 1.0e-6);
     }
 
     #[test]
@@ -491,6 +513,37 @@ impl SkinnedShadowSceneSnapshot {
 }
 
 impl RuntimeRenderController {
+    fn synchronize_gpu_scene_tables(&mut self, snapshot: &PrimitiveSceneSnapshot) {
+        if !newengine_runtime_env::var_bool("NEWENGINE_GPU_SCENE_TABLES_ENABLE", false) {
+            return;
+        }
+        let materials_lock = self.bridges.scene.materials();
+        let materials = materials_lock.read();
+        let gpu = &mut self.gpu;
+        gpu.tables.synchronize_cpu(
+            self.frame.frame_index,
+            snapshot,
+            &gpu.geometry,
+            &*materials,
+        );
+        if newengine_ulog_api::ulog::trace_enabled()
+            && (self.frame.frame_index <= 3 || self.frame.frame_index.is_multiple_of(300))
+        {
+            let stats = gpu.tables.stats();
+            newengine_ulog_api::ulog::trace!(
+                "render gpu scene tables: frame={} geometry={}/{} materials={}/{} objects={}/{} material_revision={} gate='NEWENGINE_GPU_SCENE_TABLES_ENABLE'",
+                self.frame.frame_index,
+                stats.geometry_resident,
+                stats.geometry_slots,
+                stats.material_resident,
+                stats.material_slots,
+                stats.object_resident,
+                stats.object_slots,
+                stats.material_revision,
+            );
+        }
+    }
+
     /// Returns the frame-coherent primitive snapshot and whether it was already captured.
     pub(super) fn primitive_scene_snapshot(
         &mut self,
@@ -498,20 +551,26 @@ impl RuntimeRenderController {
         runtime: bool,
     ) -> (Arc<PrimitiveSceneSnapshot>, bool) {
         let frame_index = self.frame.frame_index;
-        if let Some(snapshot) = self.frame.primitive_scene_snapshot.as_mut() {
+        let reused = if let Some(snapshot) = self.frame.primitive_scene_snapshot.as_mut() {
             if snapshot.matches_scene(scene, runtime) {
                 let reusable = Arc::make_mut(snapshot).refresh_for_frame(frame_index, scene);
-                if reusable {
-                    return (Arc::clone(snapshot), true);
-                }
+                reusable.then(|| Arc::clone(snapshot))
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(snapshot) = reused {
+            self.synchronize_gpu_scene_tables(snapshot.as_ref());
+            return (snapshot, true);
         }
 
         let snapshot = Arc::new(PrimitiveSceneSnapshot::capture(frame_index, scene, runtime));
         self.frame.primitive_scene_snapshot = Some(Arc::clone(&snapshot));
+        self.synchronize_gpu_scene_tables(snapshot.as_ref());
         (snapshot, false)
     }
-
     /// Returns skinned shadow admission captured once for all CSM cascades.
     pub(super) fn skinned_shadow_scene_snapshot(
         &mut self,

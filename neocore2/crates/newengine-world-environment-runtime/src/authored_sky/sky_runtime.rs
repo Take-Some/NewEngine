@@ -135,7 +135,40 @@ pub fn tick_game_ready_sky_cycle(world: &mut newengine_ecs::World, dt: f32) {
     // Real auto-exposure responds slower than a passing cloud. Apply only a
     // small compensation so the world visibly darkens when direct sun vanishes.
     postfx.exposure *= 1.0 + dynamics.sun_occlusion.smoothed_density * 0.025;
+    let fog = environment_frame
+        .as_ref()
+        .map(|environment| {
+            let visibility_m = environment
+                .atmosphere
+                .visibility_distance_meters
+                .max(25.0);
+            // Koschmieder extinction for ~2% contrast at the reported meteorological
+            // visibility distance. This turns the weather model into a metric optical
+            // coefficient instead of treating normalized fog_density as 1/metre.
+            let visibility_extinction = 3.912 / visibility_m;
+            let weather_extinction = environment.atmosphere.fog_density.clamp(0.0, 1.0)
+                * 0.0035;
+            newengine_engine_runtime::gameplay::EnvironmentFogRenderState {
+                enabled: visibility_m < 80_000.0 || environment.atmosphere.fog_density > 0.002,
+                density: visibility_extinction.max(weather_extinction).clamp(0.0, 0.08),
+                // Environment authoring expresses falloff as a normalized weather
+                // parameter. Convert it to a gentle inverse-metre coefficient.
+                height_falloff: (environment.atmosphere.fog_height_falloff * 0.01)
+                    .clamp(0.00005, 0.02),
+                color_linear: [
+                    environment.atmosphere.fog_color_linear.r.max(0.0),
+                    environment.atmosphere.fog_color_linear.g.max(0.0),
+                    environment.atmosphere.fog_color_linear.b.max(0.0),
+                ],
+                base_height_m: 0.0,
+                start_distance_m: 2.0,
+                max_opacity: (0.78 + environment.atmosphere.fog_density.clamp(0.0, 1.0) * 0.18)
+                    .clamp(0.0, 0.96),
+            }
+        })
+        .unwrap_or_default();
     world.insert_resource(postfx);
+    world.insert_resource(fog);
     world.insert_resource(dynamics.sun_occlusion);
     world.insert_resource(spatial_shadow);
     world.insert_resource(

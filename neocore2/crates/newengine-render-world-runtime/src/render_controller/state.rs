@@ -14,7 +14,7 @@ use newengine_scene_bridge_runtime::scene_bridge::SceneBridge;
 use newengine_viewport_bridge::ViewportBridge;
 
 use super::gpu::{
-    DebugLineGpu, HairGpuRenderer, LitPipeline, MaterialGpuPipeline, MaterialGpuPipelineKey,
+    DebugLineGpu, GeometryArena, HairGpuRenderer, LitPipeline, MaterialGpuPipeline, MaterialGpuPipelineKey,
     MaterialGpuRegistry, MaterialPipelineBuildProfile, PlayerSkinGpu, PrimitiveGpu, SkinPaletteGpu,
     VfxGpuRenderer,
 };
@@ -22,6 +22,11 @@ use super::material_bindings::MaterialTextureGpuResidency;
 use super::material_plan_cache::ResolvedLitMaterialPlanCache;
 use super::metrics::RuntimeOverlayMetrics;
 use super::module_impl::draw_lists::RenderDrawListProviderRegistry;
+use super::module_impl::gpu_gbuffer_indirect::GpuDrivenGbufferState;
+use super::module_impl::gpu_shadow_indirect::GpuShadowIndirectState;
+use super::module_impl::gpu_indirect_stream::GpuIndirectStreamBuilder;
+use super::module_impl::gpu_scene_table_upload::{GpuSceneTableBuffers, GpuSceneTableUploader};
+use super::module_impl::gpu_scene_tables::GpuSceneTables;
 use super::module_impl::instancing::InstanceBufferUploader;
 use super::module_impl::light_extraction::LightExtractionProviderRegistry;
 use super::resource_lifetime::RenderGpuLifetimeQueue;
@@ -501,6 +506,13 @@ impl RenderGpuLifetimeState {
 /// provide material, mesh and light extraction behavior explicitly.
 pub(super) struct RenderGpuSceneState {
     pub(super) material: RenderMaterialGpuState,
+    pub(super) geometry: GeometryArena,
+    pub(super) tables: GpuSceneTables,
+    pub(super) table_uploader: GpuSceneTableUploader,
+    pub(super) table_buffers: Option<GpuSceneTableBuffers>,
+    pub(super) indirect_stream: GpuIndirectStreamBuilder,
+    pub(super) indirect_gbuffer: GpuDrivenGbufferState,
+    pub(super) indirect_shadow: GpuShadowIndirectState,
     pub(super) meshes: RenderMeshGpuState,
     pub(super) lifetimes: RenderGpuLifetimeState,
     pub(super) hair: HairGpuRenderer,
@@ -512,6 +524,13 @@ impl RenderGpuSceneState {
     pub(super) fn new() -> Self {
         Self {
             material: RenderMaterialGpuState::new(),
+            geometry: GeometryArena::new(),
+            tables: GpuSceneTables::default(),
+            table_uploader: GpuSceneTableUploader::new(),
+            table_buffers: None,
+            indirect_stream: GpuIndirectStreamBuilder::new(),
+            indirect_gbuffer: GpuDrivenGbufferState::new(),
+            indirect_shadow: GpuShadowIndirectState::new(),
             meshes: RenderMeshGpuState::new(),
             lifetimes: RenderGpuLifetimeState::new(),
             hair: HairGpuRenderer::new(),
@@ -609,6 +628,8 @@ pub(super) struct RenderVisibilityRuntimeState {
     pub(super) last_viewport_extent: Option<[u32; 2]>,
     pub(super) last_submission_frame: u64,
     pub(super) last_provider_frame: u64,
+    pub(super) last_source_count: usize,
+    pub(super) last_eligible_count: usize,
     pub(super) last_candidate_count: usize,
     pub(super) last_result_count: usize,
     pub(super) service_failures: u64,
@@ -625,6 +646,8 @@ impl RenderVisibilityRuntimeState {
             last_viewport_extent: None,
             last_submission_frame: 0,
             last_provider_frame: 0,
+            last_source_count: 0,
+            last_eligible_count: 0,
             last_candidate_count: 0,
             last_result_count: 0,
             service_failures: 0,
@@ -635,6 +658,9 @@ impl RenderVisibilityRuntimeState {
     pub(super) fn clear_history(&mut self) {
         self.history.clear();
         self.last_provider_frame = 0;
+        self.last_source_count = 0;
+        self.last_eligible_count = 0;
+        self.last_candidate_count = 0;
         self.last_result_count = 0;
     }
 }

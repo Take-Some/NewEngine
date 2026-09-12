@@ -1,6 +1,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod debug_lines;
+mod geometry_arena;
 mod hair;
 mod material_registry;
 mod primitives;
@@ -10,6 +11,7 @@ mod types;
 mod vfx_particles;
 
 pub(super) use debug_lines::ensure_debug_line_pipeline;
+pub(super) use geometry_arena::{GeometryArena, GeometryArenaStats, GeometryHandle, GeometrySlice};
 pub(super) use hair::HairGpuRenderer;
 pub use material_registry::MaterialGpuRegistry;
 pub use newengine_material_domain_api::{

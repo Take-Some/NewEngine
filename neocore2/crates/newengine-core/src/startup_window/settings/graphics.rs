@@ -16,6 +16,19 @@ pub struct StartupGraphicsSettings {
     pub ssao_intensity: f32,
     pub ssao_quality_steps: u32,
     pub ssao_half_resolution: bool,
+    pub ssr_enabled: bool,
+    pub ssr_intensity: f32,
+    pub ssr_max_distance_m: f32,
+    pub ssr_thickness_m: f32,
+    pub ssr_stride_m: f32,
+    pub ssr_roughness_cutoff: f32,
+    pub ssr_max_steps: u32,
+    pub volumetric_fog_enabled: bool,
+    pub froxel_tile_size_px: u32,
+    pub froxel_depth_slices: u32,
+    pub froxel_max_distance_m: f32,
+    pub froxel_temporal_feedback: f32,
+    pub froxel_anisotropy: f32,
     pub bloom_enabled: bool,
     pub bloom_threshold: f32,
     pub bloom_knee: f32,
@@ -52,6 +65,15 @@ pub struct StartupGraphicsSettings {
     pub lod_distance_scale: f32,
     pub texture_quality: TextureQuality,
     pub anisotropy: u8,
+    /// Builds stable geometry/material/object tables for the experimental GPU-driven data plane.
+    pub gpu_scene_tables_enabled: bool,
+    /// Enables VisibilityCull + compacted indirect submission only when backend capability negotiation passes.
+    pub gpu_driven_indirect_enabled: bool,
+    /// Enables the conservative opaque shadow indirect subset; requires the parent GPU-driven path.
+    pub gpu_driven_shadow_indirect_enabled: bool,
+    pub geometry_arena_vertex_page_mib: u32,
+    pub geometry_arena_index_page_mib: u32,
+    pub geometry_arena_max_pages: u32,
 }
 
 impl Default for StartupGraphicsSettings {
@@ -72,6 +94,19 @@ impl Default for StartupGraphicsSettings {
             ssao_intensity: 0.82,
             ssao_quality_steps: 16,
             ssao_half_resolution: true,
+            ssr_enabled: true,
+            ssr_intensity: 0.55,
+            ssr_max_distance_m: 48.0,
+            ssr_thickness_m: 0.22,
+            ssr_stride_m: 0.55,
+            ssr_roughness_cutoff: 0.68,
+            ssr_max_steps: 56,
+            volumetric_fog_enabled: true,
+            froxel_tile_size_px: 24,
+            froxel_depth_slices: 48,
+            froxel_max_distance_m: 140.0,
+            froxel_temporal_feedback: 0.82,
+            froxel_anisotropy: 0.15,
             bloom_enabled: true,
             bloom_threshold: 0.85,
             bloom_knee: 0.35,
@@ -103,6 +138,12 @@ impl Default for StartupGraphicsSettings {
             lod_distance_scale: 1.0,
             texture_quality: TextureQuality::High,
             anisotropy: 8,
+            gpu_scene_tables_enabled: false,
+            gpu_driven_indirect_enabled: false,
+            gpu_driven_shadow_indirect_enabled: false,
+            geometry_arena_vertex_page_mib: 32,
+            geometry_arena_index_page_mib: 16,
+            geometry_arena_max_pages: 64,
         };
         // Default launch settings preserve scene-authored cascade/map topology. Quality
         // presets become authoritative only when the user explicitly selects one.
@@ -122,6 +163,19 @@ impl StartupGraphicsSettings {
                 self.ssao_enabled = false;
                 self.ssao_quality_steps = 8;
                 self.ssao_half_resolution = true;
+                self.ssr_enabled = false;
+                self.ssr_intensity = 0.40;
+                self.ssr_max_distance_m = 24.0;
+                self.ssr_thickness_m = 0.30;
+                self.ssr_stride_m = 0.90;
+                self.ssr_roughness_cutoff = 0.50;
+                self.ssr_max_steps = 24;
+                self.volumetric_fog_enabled = false;
+                self.froxel_tile_size_px = 32;
+                self.froxel_depth_slices = 32;
+                self.froxel_max_distance_m = 90.0;
+                self.froxel_temporal_feedback = 0.72;
+                self.froxel_anisotropy = 0.05;
                 self.bloom_enabled = false;
                 self.depth_of_field_enabled = false;
                 self.motion_blur_enabled = false;
@@ -157,6 +211,19 @@ impl StartupGraphicsSettings {
                 self.ssao_enabled = false;
                 self.ssao_quality_steps = 16;
                 self.ssao_half_resolution = true;
+                self.ssr_enabled = true;
+                self.ssr_intensity = 0.52;
+                self.ssr_max_distance_m = 40.0;
+                self.ssr_thickness_m = 0.25;
+                self.ssr_stride_m = 0.65;
+                self.ssr_roughness_cutoff = 0.62;
+                self.ssr_max_steps = 48;
+                self.volumetric_fog_enabled = true;
+                self.froxel_tile_size_px = 24;
+                self.froxel_depth_slices = 48;
+                self.froxel_max_distance_m = 140.0;
+                self.froxel_temporal_feedback = 0.82;
+                self.froxel_anisotropy = 0.15;
                 self.bloom_enabled = true;
                 self.depth_of_field_enabled = false;
                 self.motion_blur_enabled = false;
@@ -192,6 +259,19 @@ impl StartupGraphicsSettings {
                 self.ssao_enabled = true;
                 self.ssao_quality_steps = 24;
                 self.ssao_half_resolution = true;
+                self.ssr_enabled = true;
+                self.ssr_intensity = 0.58;
+                self.ssr_max_distance_m = 56.0;
+                self.ssr_thickness_m = 0.20;
+                self.ssr_stride_m = 0.48;
+                self.ssr_roughness_cutoff = 0.72;
+                self.ssr_max_steps = 72;
+                self.volumetric_fog_enabled = true;
+                self.froxel_tile_size_px = 16;
+                self.froxel_depth_slices = 64;
+                self.froxel_max_distance_m = 200.0;
+                self.froxel_temporal_feedback = 0.88;
+                self.froxel_anisotropy = 0.20;
                 self.bloom_enabled = true;
                 self.depth_of_field_enabled = false;
                 self.motion_blur_enabled = false;
@@ -227,6 +307,19 @@ impl StartupGraphicsSettings {
                 self.ssao_enabled = true;
                 self.ssao_quality_steps = 32;
                 self.ssao_half_resolution = false;
+                self.ssr_enabled = true;
+                self.ssr_intensity = 0.62;
+                self.ssr_max_distance_m = 72.0;
+                self.ssr_thickness_m = 0.16;
+                self.ssr_stride_m = 0.36;
+                self.ssr_roughness_cutoff = 0.80;
+                self.ssr_max_steps = 96;
+                self.volumetric_fog_enabled = true;
+                self.froxel_tile_size_px = 16;
+                self.froxel_depth_slices = 96;
+                self.froxel_max_distance_m = 260.0;
+                self.froxel_temporal_feedback = 0.92;
+                self.froxel_anisotropy = 0.30;
                 self.bloom_enabled = true;
                 self.depth_of_field_enabled = true;
                 self.motion_blur_enabled = true;
@@ -263,6 +356,15 @@ impl StartupGraphicsSettings {
             2 | 4 | 8 => self.msaa_samples,
             _ => 0,
         };
+        if !self.gpu_scene_tables_enabled {
+            self.gpu_driven_indirect_enabled = false;
+        }
+        if !self.gpu_scene_tables_enabled || !self.gpu_driven_indirect_enabled {
+            self.gpu_driven_shadow_indirect_enabled = false;
+        }
+        self.geometry_arena_vertex_page_mib = self.geometry_arena_vertex_page_mib.clamp(4, 256);
+        self.geometry_arena_index_page_mib = self.geometry_arena_index_page_mib.clamp(2, 128);
+        self.geometry_arena_max_pages = self.geometry_arena_max_pages.clamp(1, 256);
         self.anisotropy = match self.anisotropy {
             2 | 4 | 8 | 16 => self.anisotropy,
             _ => 0,
@@ -276,6 +378,17 @@ impl StartupGraphicsSettings {
         self.ssao_radius_ws = self.ssao_radius_ws.clamp(0.05, 10.0);
         self.ssao_intensity = self.ssao_intensity.clamp(0.0, 4.0);
         self.ssao_quality_steps = self.ssao_quality_steps.clamp(4, 64);
+        self.ssr_intensity = self.ssr_intensity.clamp(0.0, 2.0);
+        self.ssr_max_distance_m = self.ssr_max_distance_m.clamp(2.0, 200.0);
+        self.ssr_thickness_m = self.ssr_thickness_m.clamp(0.02, 2.0);
+        self.ssr_stride_m = self.ssr_stride_m.clamp(0.05, 4.0);
+        self.ssr_roughness_cutoff = self.ssr_roughness_cutoff.clamp(0.05, 1.0);
+        self.ssr_max_steps = self.ssr_max_steps.clamp(8, 128);
+        self.froxel_tile_size_px = self.froxel_tile_size_px.clamp(8, 64);
+        self.froxel_depth_slices = self.froxel_depth_slices.clamp(16, 128);
+        self.froxel_max_distance_m = self.froxel_max_distance_m.clamp(16.0, 1_000.0);
+        self.froxel_temporal_feedback = self.froxel_temporal_feedback.clamp(0.0, 0.98);
+        self.froxel_anisotropy = self.froxel_anisotropy.clamp(-0.85, 0.85);
         self.bloom_threshold = self.bloom_threshold.clamp(0.0, 20.0);
         self.bloom_knee = self.bloom_knee.clamp(0.0, 5.0);
         self.bloom_intensity = self.bloom_intensity.clamp(0.0, 5.0);

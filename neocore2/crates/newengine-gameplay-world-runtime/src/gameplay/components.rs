@@ -35,8 +35,8 @@ pub use player::{
     PlayerVisualKind, PlayerVisualPart, PlayerWeaponArmIkRigDefinition,
 };
 pub use render_environment::{
-    CloudShadowRenderState, EnvironmentDomeRenderState, EnvironmentPostFxState,
-    SkyCloudProfileRenderState, TerrainMaterialLayers, WorldClearColor,
+    CloudShadowRenderState, EnvironmentDomeRenderState, EnvironmentFogRenderState,
+    EnvironmentPostFxState, SkyCloudProfileRenderState, TerrainMaterialLayers, WorldClearColor,
 };
 pub use run_mode::GameRunMode;
 pub use scene::{

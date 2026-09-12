@@ -20,6 +20,12 @@ pub const RG_GBUFFER_NORMAL: RenderGraphResourceId = RenderGraphResourceId(21);
 pub const RG_GBUFFER_MATERIAL: RenderGraphResourceId = RenderGraphResourceId(22);
 pub const RG_GBUFFER_DEPTH: RenderGraphResourceId = RenderGraphResourceId(23);
 pub const RG_LIT_COLOR: RenderGraphResourceId = RenderGraphResourceId(30);
+/// Full-resolution linear-HDR bloom contribution produced by the dedicated bloom pyramid.
+pub const RG_BLOOM_COMPOSITE: RenderGraphResourceId = RenderGraphResourceId(31);
+/// Deferred screen-space reflection radiance; alpha stores confidence.
+pub const RG_SSR_REFLECTION: RenderGraphResourceId = RenderGraphResourceId(32);
+/// Logical 3D froxel volume stored as a packed 2D atlas for the current provider ABI.
+pub const RG_FROXEL_FOG_VOLUME: RenderGraphResourceId = RenderGraphResourceId(33);
 /// Canonical SDR presentation format selected by the Vulkan WSI backend.
 /// Offscreen LDR scene/editor targets intentionally remain BGRA8 UNORM.
 pub const SDR_PRESENTATION_COLOR_FORMAT: TextureFormat = TextureFormat::Bgra8Srgb;
@@ -31,6 +37,9 @@ pub struct FrameGraphTargetDesc {
     pub viewport_is_surface: bool,
     pub viewport_render_target: Option<RenderTargetId>,
     pub shadow_render_target: Option<RenderTargetId>,
+    /// Physical extent of the persistent directional shadow atlas. This remains
+    /// valid when the current frame reuses a cached atlas without executing a writer pass.
+    pub shadow_extent: Extent2D,
     pub local_shadow_render_target: Option<RenderTargetId>,
     pub local_shadow_extent: Extent2D,
     /// Offscreen/non-surface viewport color format. Native SDR swapchain resources use
@@ -60,6 +69,7 @@ impl FrameGraphTargetDesc {
             viewport_is_surface,
             viewport_render_target: None,
             shadow_render_target: None,
+            shadow_extent: Extent2D::new(1, 1),
             local_shadow_render_target: None,
             local_shadow_extent: Extent2D::new(1, 1),
             color_format: TextureFormat::Bgra8Unorm,
@@ -77,8 +87,13 @@ impl FrameGraphTargetDesc {
     }
 
     #[inline]
-    pub fn with_shadow_render_target(mut self, target: Option<RenderTargetId>) -> Self {
+    pub fn with_shadow_render_target(
+        mut self,
+        target: Option<RenderTargetId>,
+        extent: Extent2D,
+    ) -> Self {
         self.shadow_render_target = target;
+        self.shadow_extent = Extent2D::new(extent.width.max(1), extent.height.max(1));
         self
     }
 

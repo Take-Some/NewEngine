@@ -78,4 +78,34 @@ mod tests {
         assert!(!graphics.fxaa_enabled);
         assert!(graphics.ssao_enabled);
     }
+
+    #[test]
+    fn gpu_driven_settings_are_fail_closed_and_bounded() {
+        let mut settings = StartupLaunchSettings::default();
+        assert!(!settings.graphics.gpu_scene_tables_enabled);
+        assert!(!settings.graphics.gpu_driven_indirect_enabled);
+        assert!(!settings.graphics.gpu_driven_shadow_indirect_enabled);
+        assert_eq!(settings.graphics.geometry_arena_vertex_page_mib, 32);
+        assert_eq!(settings.graphics.geometry_arena_index_page_mib, 16);
+        assert_eq!(settings.graphics.geometry_arena_max_pages, 64);
+
+        settings.graphics.gpu_driven_indirect_enabled = true;
+        settings.graphics.gpu_driven_shadow_indirect_enabled = true;
+        settings.graphics.geometry_arena_vertex_page_mib = 999;
+        settings.graphics.geometry_arena_index_page_mib = 0;
+        settings.graphics.geometry_arena_max_pages = 999;
+        settings.normalize();
+        assert!(!settings.graphics.gpu_driven_indirect_enabled);
+        assert!(!settings.graphics.gpu_driven_shadow_indirect_enabled);
+        assert_eq!(settings.graphics.geometry_arena_vertex_page_mib, 256);
+        assert_eq!(settings.graphics.geometry_arena_index_page_mib, 2);
+        assert_eq!(settings.graphics.geometry_arena_max_pages, 256);
+
+        settings.graphics.gpu_scene_tables_enabled = true;
+        settings.graphics.gpu_driven_indirect_enabled = true;
+        settings.graphics.gpu_driven_shadow_indirect_enabled = true;
+        settings.normalize();
+        assert!(settings.graphics.gpu_driven_indirect_enabled);
+        assert!(settings.graphics.gpu_driven_shadow_indirect_enabled);
+    }
 }

@@ -197,6 +197,15 @@ pub trait RenderApi: Send {
         ))
     }
 
+    #[inline]
+    fn dispatch_visibility_indirect_compact_v2(
+        &mut self,
+        _args: GpuVisibilityIndirectCompactArgsV2,
+    ) -> EngineResult<()> {
+        Err(EngineError::other(
+            "render backend does not support V2 GPU visibility indirect compaction",
+        ))
+    }
     fn dispatch(&mut self, args: DispatchArgs) -> EngineResult<()>;
 
     /// Selects the render graph phase that subsequent recorded commands belong to.

@@ -59,6 +59,29 @@ impl PendingLitPipelineBuild {
         Ok(desc)
     }
 
+    pub(super) fn instanced_alpha_pipeline_desc(
+        &self,
+        double_sided: bool,
+    ) -> MaterialDomainResult<PipelineDesc> {
+        let label = if double_sided {
+            "standard_lit_alpha_pipeline_instanced_double_sided"
+        } else {
+            "standard_lit_alpha_pipeline_instanced"
+        };
+        Ok(self
+            .pipeline_desc(double_sided, true, false)?
+            .with_label(label)
+            .with_cache_key(format!(
+                "standard:{label}:{:?}",
+                self.profile.scene_hdr_color_format
+            ))
+            .with_depth_state(
+                TextureFormat::Depth32Float,
+                PipelineDepthMode::new(true, false, PipelineDepthCompare::LessOrEqual),
+            )
+            .with_blend_mode(PipelineBlendMode::Alpha))
+    }
+
     pub(super) fn decal_pipeline_desc(
         &self,
         double_sided: bool,

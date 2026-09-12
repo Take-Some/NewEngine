@@ -125,6 +125,13 @@ impl<E: Send + 'static> Module<E> for RenderBackendRuntimeModule {
             info.work_budget.max_upload_bytes_per_frame / (1024 * 1024)
         );
 
+        if std::env::var_os("NEWENGINE_RENDER_CAPS_DUMP").is_some() {
+            newengine_ulog_api::ulog::info!(
+                "render backend: negotiated feature surface {:?}",
+                negotiated_capabilities.features
+            );
+        }
+
         let resolved = ResolvedRenderBackendConfig {
             backend_id: info.backend_id,
             clear_color: info.clear_color,

@@ -74,9 +74,7 @@ pub(super) fn draw_primitives_shadow_body(
             }
         }
         if runtime {
-            if let Some((local_center, local_radius)) = source.local_bounds {
-                let (center_ws, radius_ws) =
-                    transform_sphere(render_model, local_center, local_radius);
+            if let Some((center_ws, radius_ws)) = source.world_bounds {
                 if center_ws.distance_squared(camera_position) > shadow_max_distance_sq {
                     shadow_distance_culled = shadow_distance_culled.saturating_add(1);
                     continue;
@@ -114,6 +112,34 @@ pub(super) fn draw_primitives_shadow_body(
     let foliage_shadow_budget = foliage_instance_budget(runtime, true);
     sort_and_truncate_by_distance_then_key(&mut entries, shadow_budget);
     sort_and_truncate_by_distance_then_key(&mut foliage_entries, foliage_shadow_budget);
+    let admitted_shadow_keys = entries
+        .iter()
+        .chain(foliage_entries.iter())
+        .map(|entry| entry.1)
+        .collect::<Vec<_>>();
+    let indirect_shadow_cull = this.shadows_current_cull();
+    let gpu_shadow_migrated = match this.record_gpu_indirect_shadow_subset(
+        r,
+        lit,
+        light_viewproj,
+        lights,
+        cascade_index,
+        &admitted_shadow_keys,
+        indirect_shadow_cull,
+        cascade_texel_world_size,
+    ) {
+        Ok(Some(keys)) => keys.into_iter().collect::<FxHashSet<_>>(),
+        Ok(None) => FxHashSet::default(),
+        Err(error) => {
+            newengine_ulog_api::ulog::warn!(
+                "render gpu indirect shadow: frame={} cascade={} record failed; legacy shadow remains authoritative err='{}'",
+                this.frame.frame_index,
+                cascade_index,
+                error,
+            );
+            FxHashSet::default()
+        }
+    };
     let scan_ms = scan_started.elapsed().as_secs_f32() * 1000.0;
     let plan_started = std::time::Instant::now();
 
@@ -123,9 +149,13 @@ pub(super) fn draw_primitives_shadow_body(
     let mut written_ubos = FxHashSet::<u64>::default();
     let mut batches = InstanceBatchSet::default();
     let mut shadow_submitted = 0usize;
-    for (_distance_sq, _entity_key, prim, model, material_ref, foliage_runtime) in
+    let gpu_shadow_migrated_count = gpu_shadow_migrated.len();
+    for (_distance_sq, entity_key, prim, model, material_ref, foliage_runtime) in
         foliage_entries.into_iter().chain(entries)
     {
+        if gpu_shadow_migrated.contains(&entity_key) {
+            continue;
+        }
         let plan_key = PrimitivePlanKey::new(prim, material_ref, false, false, true);
         let plan = if let Some(plan) = plan_cache.get(&plan_key).copied() {
             plan
@@ -287,7 +317,7 @@ pub(super) fn draw_primitives_shadow_body(
     if batches.is_empty() {
         if shadow_log_due {
             newengine_ulog_api::ulog::debug!(
-                "primitive.draw_list: pass='shadow_casters' seen={} visible={} submitted=0 policy_culled={} distance_culled={} light_culled={} lod_culled={} budget={} foliage_budget={} plans={} shared_ubos={} batches={} instances={} policy='MeshShadowPolicy + stable light-space cull + shared texture-set UBO'",
+                "primitive.draw_list: pass='shadow_casters' seen={} visible={} submitted=0 policy_culled={} distance_culled={} light_culled={} lod_culled={} budget={} foliage_budget={} plans={} shared_ubos={} batches={} instances={} gpu_indirect_migrated={} policy='MeshShadowPolicy + stable light-space cull + shared texture-set UBO'",
                 shadow_seen,
                 shadow_visible,
                 shadow_policy_culled,
@@ -300,6 +330,7 @@ pub(super) fn draw_primitives_shadow_body(
                 written_ubos.len(),
                 shadow_batch_count,
                 shadow_instance_count,
+                gpu_shadow_migrated_count,
             );
         }
         return Ok(ShadowPrimitiveBodyProfile {
@@ -342,7 +373,7 @@ pub(super) fn draw_primitives_shadow_body(
     let total_ms = total_started.elapsed().as_secs_f32() * 1000.0;
     if stage_profile {
         newengine_ulog_api::ulog::info!(
-            "primitive.shadow.stage.profile: frame={} cascade={} total_ms={:.3} scan_ms={:.3} snapshot_reused={} entries={} plan_ms={:.3} upload_ms={:.3} replay_ms={:.3} batches={} instances={} bytes={}",
+            "primitive.shadow.stage.profile: frame={} cascade={} total_ms={:.3} scan_ms={:.3} snapshot_reused={} entries={} plan_ms={:.3} upload_ms={:.3} replay_ms={:.3} batches={} instances={} bytes={} gpu_indirect_migrated={}",
             this.frame.frame_index,
             cascade_index,
             total_ms,
@@ -355,12 +386,13 @@ pub(super) fn draw_primitives_shadow_body(
             shadow_batch_count,
             shadow_instance_count,
             packed_upload.bytes_written,
+            gpu_shadow_migrated_count,
         );
     }
 
     if shadow_log_due {
         newengine_ulog_api::ulog::debug!(
-            "primitive.draw_list: pass='shadow_casters' seen={} visible={} submitted={} policy_culled={} distance_culled={} light_culled={} lod_culled={} budget={} foliage_budget={} plans={} shared_ubos={} batches={} instances={} upload_writes=1 upload_bytes={} policy='MeshShadowPolicy + stable light-space cull + shared texture-set UBO + packed instance upload'",
+            "primitive.draw_list: pass='shadow_casters' seen={} visible={} submitted={} policy_culled={} distance_culled={} light_culled={} lod_culled={} budget={} foliage_budget={} plans={} shared_ubos={} batches={} instances={} upload_writes=1 upload_bytes={} gpu_indirect_migrated={} policy='MeshShadowPolicy + stable light-space cull + shared texture-set UBO + packed instance upload'",
             shadow_seen,
             shadow_visible,
             shadow_submitted,
@@ -375,6 +407,7 @@ pub(super) fn draw_primitives_shadow_body(
             shadow_batch_count,
             shadow_instance_count,
             packed_upload.bytes_written,
+            gpu_shadow_migrated_count,
         );
     }
 

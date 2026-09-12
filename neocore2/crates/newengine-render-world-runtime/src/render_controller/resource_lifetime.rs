@@ -92,6 +92,11 @@ impl RenderGpuLifetimeQueue {
         self.latest_completed_frame = latest_completed_frame;
     }
 
+    #[inline]
+    pub(super) fn latest_completed_frame(&self) -> u64 {
+        self.latest_completed_frame
+    }
+
     pub(super) fn collect(
         &mut self,
         r: &mut dyn RenderApi,

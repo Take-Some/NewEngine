@@ -107,6 +107,66 @@ impl GpuVisibilityIndirectCullArgs {
     }
 }
 
+/// V2 GPU visibility contract for true compacted indexed-indirect submission.
+///
+/// Unlike `GpuVisibilityIndirectCullArgs` v1, the source command stream is immutable. The
+/// compute provider copies only visible commands into `output_indirect_buffer` and atomically
+/// increments the u32 counter at `count_buffer + count_offset`. `output_capacity` bounds writes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GpuVisibilityIndirectCompactArgsV2 {
+    pub candidate_buffer: BufferId,
+    pub candidate_offset: u64,
+    pub source_indirect_buffer: BufferId,
+    pub source_indirect_offset: u64,
+    pub output_indirect_buffer: BufferId,
+    pub output_indirect_offset: u64,
+    pub count_buffer: BufferId,
+    pub count_offset: u64,
+    pub candidate_count: u32,
+    pub output_capacity: u32,
+    pub candidate_stride: u32,
+    pub command_stride: u32,
+    pub viewport_extent: [u32; 2],
+    pub camera: FrameCameraContext,
+}
+
+impl GpuVisibilityIndirectCompactArgsV2 {
+    pub const VERSION: u32 = 2;
+    pub const COUNT_STRIDE: u32 = 4;
+
+    #[inline]
+    pub const fn new(
+        candidate_buffer: BufferId,
+        candidate_offset: u64,
+        source_indirect_buffer: BufferId,
+        source_indirect_offset: u64,
+        output_indirect_buffer: BufferId,
+        output_indirect_offset: u64,
+        count_buffer: BufferId,
+        count_offset: u64,
+        candidate_count: u32,
+        output_capacity: u32,
+        viewport_extent: [u32; 2],
+        camera: FrameCameraContext,
+    ) -> Self {
+        Self {
+            candidate_buffer,
+            candidate_offset,
+            source_indirect_buffer,
+            source_indirect_offset,
+            output_indirect_buffer,
+            output_indirect_offset,
+            count_buffer,
+            count_offset,
+            candidate_count,
+            output_capacity,
+            candidate_stride: GpuVisibilityIndirectCandidate::STRIDE,
+            command_stride: GpuDrawIndexedIndirectCommand::STRIDE,
+            viewport_extent,
+            camera,
+        }
+    }
+}
 #[inline]
 pub fn gpu_visibility_candidates_as_bytes(
     candidates: &[GpuVisibilityIndirectCandidate],

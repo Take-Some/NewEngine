@@ -11,6 +11,21 @@ impl RuntimeRenderController {
             .lifetimes
             .resources
             .collect(r, self.frame.frame_index, self.backend_execution);
+        let latest_completed = self.gpu.lifetimes.resources.latest_completed_frame();
+        let reclaimed = self.gpu.geometry.collect_completed(latest_completed);
+        if reclaimed > 0 && newengine_ulog_api::ulog::trace_enabled() {
+            let stats = self.gpu.geometry.stats();
+            newengine_ulog_api::ulog::trace!(
+                "render geometry arena: reclaimed frame={} latest_completed={} allocations={} resident={} retired={} reusable={} pages={}",
+                self.frame.frame_index,
+                latest_completed,
+                reclaimed,
+                stats.resident_slots,
+                stats.retired_slots,
+                stats.reusable_slots,
+                stats.pages,
+            );
+        }
     }
 
     pub(in crate::render_controller) fn retire_render_target_with_reason(

@@ -98,7 +98,12 @@ pub(super) fn draw_primitives_for_pass(
     let mut sky_seen = 0usize;
     let mut sky_profile_culled = 0usize;
     let mut visibility_feedback_culled = 0usize;
+    let mut gpu_indirect_migrated = 0usize;
     for source in primitive_snapshot.entries.iter() {
+        if pass.is_gbuffer() && this.gpu_indirect_entity_migrated(source.entity_key) {
+            gpu_indirect_migrated = gpu_indirect_migrated.saturating_add(1);
+            continue;
+        }
         let prim = source.primitive;
         let render_model = source.render_model;
         let sky_dome_runtime = source.environment_dome.as_ref();
@@ -169,11 +174,7 @@ pub(super) fn draw_primitives_for_pass(
                 }
             }
         }
-        let transformed_bounds = source
-            .local_bounds
-            .map(|(local_center, local_radius)| {
-                transform_sphere(render_model, local_center, local_radius)
-            });
+        let transformed_bounds = source.world_bounds;
         if runtime && !follows_view && !sky_role {
             if let Some((center_ws, radius_ws)) = transformed_bounds {
                 if !sphere_within_render_distance(
@@ -244,6 +245,26 @@ pub(super) fn draw_primitives_for_pass(
         } else {
             entries.push(entry);
         }
+    }
+    if runtime
+        && (this.frame.frame_index <= 3 || route_diagnostics_due(this.frame.frame_index))
+    {
+        newengine_ulog_api::ulog::debug!(
+            "render.visibility.effectiveness: frame={} pass='{}' snapshot={} eligible={} queried={} confirmed_occluded={} actually_culled={} gpu_indirect_migrated={}",
+            this.frame.frame_index,
+            pass.label(),
+            this.frame.visibility.last_source_count,
+            this.frame.visibility.last_eligible_count,
+            this.frame.visibility.last_candidate_count,
+            this.frame
+                .visibility
+                .history
+                .values()
+                .filter(|history| history.confirmed_occluded)
+                .count(),
+            visibility_feedback_culled,
+            gpu_indirect_migrated,
+        );
     }
     sort_by_distance_then_key(&mut sky_entries);
     sort_and_truncate_by_distance_then_key(
@@ -362,9 +383,15 @@ pub(super) fn draw_primitives_for_pass(
                 );
             }
             let base_tex = if let Some(path) = material_plan.base_color_texture {
-                if foliage_role || material_plan.alpha_cutoff > 0.0 || authored_pbr_required {
+                if foliage_role
+                    || material_plan.alpha_cutoff > 0.0
+                    || material_plan.alpha_blend
+                    || authored_pbr_required
+                {
                     let status_owner = if authored_pbr_required {
                         "render.authored_pbr_object"
+                    } else if material_plan.alpha_blend {
+                        "render.world_transparent"
                     } else {
                         "render.world_foliage"
                     };
@@ -470,6 +497,10 @@ pub(super) fn draw_primitives_for_pass(
                 lit.decal_instanced_double_sided_pipeline
             } else if decal_role {
                 lit.decal_instanced_pipeline
+            } else if material_plan.alpha_blend && material_plan.double_sided {
+                lit.instanced_alpha_double_sided_pipeline
+            } else if material_plan.alpha_blend {
+                lit.instanced_alpha_pipeline
             } else if material_plan.double_sided {
                 lit.instanced_double_sided_pipeline
             } else {

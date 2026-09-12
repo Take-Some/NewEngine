@@ -3,7 +3,7 @@ use super::codec::*;
 use crate::{
     BindGroupId, BufferId, BufferSlice, DispatchArgs, DrawArgs, DrawIndexedArgs,
     DrawIndexedIndirectArgs, DrawIndexedIndirectCountArgs, FrameCameraContext,
-    GpuVisibilityIndirectCullArgs, PipelineId, RectI32, Viewport,
+    GpuVisibilityIndirectCompactArgsV2, GpuVisibilityIndirectCullArgs, PipelineId, RectI32, Viewport,
 };
 
 const COMMAND_BATCH_BIN_MAGIC: &[u8; 8] = b"NECB\x02\0\0\0";
@@ -157,6 +157,29 @@ fn encode_unit_command(out: &mut Vec<u8>, command: &RenderCommand) -> Result<(),
             put_f32(out, args.camera.near);
             put_f32(out, args.camera.far);
         }
+        RenderCommand::DispatchVisibilityIndirectCompactV2(args) => {
+            put_u8(out, 17);
+            put_u32(out, args.candidate_buffer.get());
+            put_u64(out, args.candidate_offset);
+            put_u32(out, args.source_indirect_buffer.get());
+            put_u64(out, args.source_indirect_offset);
+            put_u32(out, args.output_indirect_buffer.get());
+            put_u64(out, args.output_indirect_offset);
+            put_u32(out, args.count_buffer.get());
+            put_u64(out, args.count_offset);
+            put_u32(out, args.candidate_count);
+            put_u32(out, args.output_capacity);
+            put_u32(out, args.candidate_stride);
+            put_u32(out, args.command_stride);
+            put_u32(out, args.viewport_extent[0]);
+            put_u32(out, args.viewport_extent[1]);
+            for value in args.camera.position_ws { put_f32(out, value); }
+            for value in args.camera.forward_ws { put_f32(out, value); }
+            for value in args.camera.up_ws { put_f32(out, value); }
+            put_f32(out, args.camera.fov_y);
+            put_f32(out, args.camera.near);
+            put_f32(out, args.camera.far);
+        }
         _ => {
             return Err(format!(
                 "render command is not supported by binary unit batch: {command:?}"
@@ -276,6 +299,101 @@ fn decode_unit_command(r: &mut BinReader<'_>) -> Result<RenderCommand, String> {
                 },
             ))
         }
+        17 => {
+            let candidate_buffer = BufferId::new(r.u32()?);
+            let candidate_offset = r.u64()?;
+            let source_indirect_buffer = BufferId::new(r.u32()?);
+            let source_indirect_offset = r.u64()?;
+            let output_indirect_buffer = BufferId::new(r.u32()?);
+            let output_indirect_offset = r.u64()?;
+            let count_buffer = BufferId::new(r.u32()?);
+            let count_offset = r.u64()?;
+            let candidate_count = r.u32()?;
+            let output_capacity = r.u32()?;
+            let candidate_stride = r.u32()?;
+            let command_stride = r.u32()?;
+            let viewport_extent = [r.u32()?, r.u32()?];
+            let camera = FrameCameraContext {
+                position_ws: [r.f32()?, r.f32()?, r.f32()?],
+                forward_ws: [r.f32()?, r.f32()?, r.f32()?],
+                up_ws: [r.f32()?, r.f32()?, r.f32()?],
+                fov_y: r.f32()?,
+                near: r.f32()?,
+                far: r.f32()?,
+            };
+            Ok(RenderCommand::DispatchVisibilityIndirectCompactV2(
+                GpuVisibilityIndirectCompactArgsV2 {
+                    candidate_buffer,
+                    candidate_offset,
+                    source_indirect_buffer,
+                    source_indirect_offset,
+                    output_indirect_buffer,
+                    output_indirect_offset,
+                    count_buffer,
+                    count_offset,
+                    candidate_count,
+                    output_capacity,
+                    candidate_stride,
+                    command_stride,
+                    viewport_extent,
+                    camera,
+                },
+            ))
+        }
         tag => Err(format!("unknown render command batch binary tag {tag}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v2_compact_visibility_round_trips_binary_tag_17() {
+        let args = GpuVisibilityIndirectCompactArgsV2::new(
+            BufferId::new(11),
+            64,
+            BufferId::new(12),
+            40,
+            BufferId::new(13),
+            80,
+            BufferId::new(14),
+            4,
+            7,
+            9,
+            [1920, 1080],
+            FrameCameraContext {
+                position_ws: [1.0, 2.0, 3.0],
+                forward_ws: [0.0, 0.0, -1.0],
+                up_ws: [0.0, 1.0, 0.0],
+                fov_y: 1.1,
+                near: 0.1,
+                far: 2500.0,
+            },
+        );
+        let encoded = encode_unit_command_batch_bin(&[
+            RenderCommand::DispatchVisibilityIndirectCompactV2(args),
+        ])
+        .expect("encode tag17");
+        let decoded = decode_unit_command_batch_bin(&encoded).expect("decode tag17");
+        assert_eq!(decoded.len(), 1);
+        let RenderCommand::DispatchVisibilityIndirectCompactV2(decoded) = &decoded[0] else {
+            panic!("expected V2 compact visibility command");
+        };
+        assert_eq!(decoded.candidate_buffer, args.candidate_buffer);
+        assert_eq!(decoded.candidate_offset, args.candidate_offset);
+        assert_eq!(decoded.source_indirect_buffer, args.source_indirect_buffer);
+        assert_eq!(decoded.source_indirect_offset, args.source_indirect_offset);
+        assert_eq!(decoded.output_indirect_buffer, args.output_indirect_buffer);
+        assert_eq!(decoded.output_indirect_offset, args.output_indirect_offset);
+        assert_eq!(decoded.count_buffer, args.count_buffer);
+        assert_eq!(decoded.count_offset, args.count_offset);
+        assert_eq!(decoded.candidate_count, args.candidate_count);
+        assert_eq!(decoded.output_capacity, args.output_capacity);
+        assert_eq!(decoded.candidate_stride, args.candidate_stride);
+        assert_eq!(decoded.command_stride, args.command_stride);
+        assert_eq!(decoded.viewport_extent, args.viewport_extent);
+        assert_eq!(decoded.camera, args.camera);
+        assert_eq!(encoded[12], 17, "first command tag must remain 17");
     }
 }

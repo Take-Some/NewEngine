@@ -81,6 +81,10 @@ pub struct BindGroupDesc {
     pub sampler0: Option<SamplerId>,
     pub uniform0: Option<BufferBinding>,
     pub storage0: Option<BufferBinding>,
+    #[serde(default)]
+    pub storage1: Option<BufferBinding>,
+    #[serde(default)]
+    pub storage2: Option<BufferBinding>,
 }
 
 impl BindGroupDesc {
@@ -99,6 +103,8 @@ impl BindGroupDesc {
             sampler0: None,
             uniform0: None,
             storage0: None,
+            storage1: None,
+            storage2: None,
         }
     }
 
@@ -179,5 +185,27 @@ impl BindGroupDesc {
     pub fn with_storage0(mut self, binding: BufferBinding) -> Self {
         self.storage0 = Some(binding);
         self
+    }
+
+    #[inline]
+    pub fn with_storage1(mut self, binding: BufferBinding) -> Self {
+        self.storage1 = Some(binding);
+        self
+    }
+
+    #[inline]
+    pub fn with_storage2(mut self, binding: BufferBinding) -> Self {
+        self.storage2 = Some(binding);
+        self
+    }
+
+    #[inline]
+    pub fn storage_at(&self, index: usize) -> Option<BufferBinding> {
+        match index {
+            0 => self.storage0,
+            1 => self.storage1,
+            2 => self.storage2,
+            _ => None,
+        }
     }
 }

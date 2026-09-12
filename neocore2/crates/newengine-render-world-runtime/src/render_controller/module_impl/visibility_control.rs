@@ -2,6 +2,7 @@
 
 use newengine_core::render::Extent2D;
 use newengine_math::Vec3;
+use std::sync::OnceLock;
 use newengine_model_domain_api::{MeshRenderRole, MeshTransformPolicy, MeshVisibilityPolicy};
 use newengine_visibility_api::{
     decode_visibility_result_batch_bin, encode_visibility_query_batch_bin, visibility_method,
@@ -12,7 +13,6 @@ use newengine_visibility_api::{
 
 use super::passes::mesh_visibility::{
     primitive_forward_max_distance, sphere_screen_coverage_hint, sphere_within_render_distance,
-    transform_sphere,
 };
 use super::RuntimeRenderController;
 
@@ -25,6 +25,7 @@ const OCCLUSION_MIN_CULL_DISTANCE_METERS: f32 = 6.0;
 const OCCLUSION_MAX_CULL_COVERAGE_HINT: f32 = 0.10;
 const CAMERA_CUT_DISTANCE_METERS: f32 = 25.0;
 const CAMERA_CUT_FORWARD_DOT: f32 = 0.65;
+const DEFAULT_OCCLUSION_DRAW_CULL_ENABLED: bool = false;
 
 #[derive(Clone, Copy, Debug)]
 struct VisibilityCandidatePlan {
@@ -86,11 +87,15 @@ impl RuntimeRenderController {
 
         if !newengine_plugin_host::has_service(ENGINE_VISIBILITY_SERVICE_ID) {
             clear_occlusion_confirmations(&mut self.frame.visibility.history);
+            self.frame.visibility.last_source_count = 0;
+            self.frame.visibility.last_eligible_count = 0;
             self.frame.visibility.last_candidate_count = 0;
             return;
         }
 
         let (primitive_snapshot, _) = self.primitive_scene_snapshot(scene, runtime);
+        self.frame.visibility.last_source_count = primitive_snapshot.entries.len();
+        self.frame.visibility.last_eligible_count = 0;
         let max_distance = primitive_forward_max_distance(runtime).max(1.0);
         let mut candidates = Vec::with_capacity(
             primitive_snapshot
@@ -109,11 +114,9 @@ impl RuntimeRenderController {
             {
                 continue;
             }
-            let Some((local_center, local_radius)) = source.local_bounds else {
+            let Some((center_ws, radius_ws)) = source.world_bounds else {
                 continue;
             };
-            let (center_ws, radius_ws) =
-                transform_sphere(source.render_model, local_center, local_radius);
             if !sphere_within_render_distance(
                 camera_position,
                 center_ws,
@@ -132,6 +135,20 @@ impl RuntimeRenderController {
                 radius_ws,
                 frame,
             );
+            // Spend the bounded GPU Hi-Z budget only on primitives the engine is
+            // actually allowed to reject. Querying near/camera-dominant bounds cannot
+            // change draw admission (should_cull_from_history fails them visible), and
+            // in dense scenes those high-coverage entries otherwise crowd useful
+            // occlusion candidates out of the 4096-subject provider budget.
+            if !visibility_query_eligible(distance, coverage) {
+                clear_subject_occlusion_confirmation(
+                    &mut self.frame.visibility.history,
+                    source.entity_key,
+                );
+                continue;
+            }
+            self.frame.visibility.last_eligible_count =
+                self.frame.visibility.last_eligible_count.saturating_add(1);
             candidates.push(VisibilityCandidatePlan {
                 priority,
                 candidate: VisibilityQueryCandidateV1 {
@@ -201,8 +218,10 @@ impl RuntimeRenderController {
 
         if frame <= 3 || frame.is_multiple_of(120) {
             newengine_ulog_api::ulog::debug!(
-                "render.visibility.control: frame={} candidates={} results={} provider_frame={} confirmed_occluded={} service_failures={} transport='binary-v1'",
+                "render.visibility.control: frame={} snapshot={} eligible={} queried={} results={} provider_frame={} confirmed_occluded={} service_failures={} transport='binary-v1'",
                 frame,
+                self.frame.visibility.last_source_count,
+                self.frame.visibility.last_eligible_count,
                 self.frame.visibility.last_candidate_count,
                 self.frame.visibility.last_result_count,
                 self.frame.visibility.last_provider_frame,
@@ -224,6 +243,9 @@ impl RuntimeRenderController {
         distance_m: f32,
         screen_coverage_hint: f32,
     ) -> bool {
+        if !visibility_occlusion_draw_cull_enabled() {
+            return false;
+        }
         should_cull_from_history(
             self.frame.visibility.history.get(&subject_id),
             self.frame.frame_index,
@@ -247,6 +269,17 @@ impl RuntimeRenderController {
     }
 }
 
+#[inline]
+fn visibility_occlusion_draw_cull_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        newengine_runtime_env::var_bool(
+            "NEWENGINE_VISIBILITY_OCCLUSION_DRAW_CULL_ENABLE",
+            DEFAULT_OCCLUSION_DRAW_CULL_ENABLED,
+        )
+    })
+}
+
 fn visibility_candidate_role(role: MeshRenderRole) -> bool {
     matches!(
         role,
@@ -259,6 +292,29 @@ fn visibility_priority(coverage: f32, distance: f32, max_distance: f32) -> i32 {
     let coverage_score = (coverage.clamp(0.0, 1.0) * 1_000_000.0) as i32;
     let proximity = (1.0 - (distance / max_distance.max(1.0))).clamp(0.0, 1.0);
     coverage_score.saturating_add((proximity * 100_000.0) as i32)
+}
+
+#[inline]
+fn visibility_query_eligible(distance_m: f32, screen_coverage_hint: f32) -> bool {
+    distance_m.is_finite()
+        && screen_coverage_hint.is_finite()
+        && distance_m > OCCLUSION_MIN_CULL_DISTANCE_METERS
+        && screen_coverage_hint < OCCLUSION_MAX_CULL_COVERAGE_HINT
+}
+
+fn clear_subject_occlusion_confirmation(
+    history: &mut newengine_math::collections::FxHashMap<
+        u64,
+        crate::render_controller::state::VisibilityHistoryEntry,
+    >,
+    subject_id: u64,
+) {
+    let Some(entry) = history.get_mut(&subject_id) else {
+        return;
+    };
+    entry.consecutive_occluded = 0;
+    entry.confirmed_occluded = false;
+    entry.confidence = 0.0;
 }
 
 fn trim_visibility_candidates(candidates: &mut Vec<VisibilityCandidatePlan>, cap: usize) {
@@ -470,6 +526,11 @@ mod tests {
     }
 
     #[test]
+    fn occlusion_draw_rejection_is_fail_open_by_default() {
+        const { assert!(!DEFAULT_OCCLUSION_DRAW_CULL_ENABLED) };
+    }
+
+    #[test]
     fn two_fresh_occlusion_observations_are_required_before_culling() {
         let mut state = RenderVisibilityRuntimeState::new();
         let mut history = VisibilityHistoryEntry::default();
@@ -573,6 +634,15 @@ mod tests {
         assert!(!should_cull_from_history(Some(&history), 20, 30.0, 0.01));
         assert!(!should_cull_from_history(Some(&history), 12, 3.0, 0.01));
         assert!(!should_cull_from_history(Some(&history), 12, 30.0, 0.2));
+    }
+
+    #[test]
+    fn visibility_query_budget_excludes_subjects_that_cannot_be_culled() {
+        assert!(!visibility_query_eligible(3.0, 0.01));
+        assert!(!visibility_query_eligible(30.0, 0.20));
+        assert!(!visibility_query_eligible(f32::NAN, 0.01));
+        assert!(!visibility_query_eligible(30.0, f32::NAN));
+        assert!(visibility_query_eligible(30.0, 0.01));
     }
 
     #[test]
